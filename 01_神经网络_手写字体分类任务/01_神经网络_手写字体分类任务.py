@@ -84,7 +84,7 @@ def fit(steps, model, loss_func, opt, train_dl, valid_dl):
         with torch.no_grad():   #禁止梯度操作
             losses, nums = zip(*[loss_batch(model, loss_func, xb, yb) for xb, yb in valid_dl])      #解包操作  [a for i in range(1, 11)]会生成一个列表  loss_batch函数不传入优化器，默认为只计算损失，不更新参数
 
-        val_loss = np.sum(np.multiply(losses, nums)) / np.sum(nums)     #数组相乘再相加，除以总数，计算平均损失
+        val_loss = np.sum(np.multiply(losses, nums)) / np.sum(nums)         #数组相乘再相加，除以总数，计算平均损失
         print('当前step:' + str(step), '验证集损失：' + str(val_loss))
 
         correct = 0             #计算验证集准确率
