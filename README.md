@@ -272,8 +272,29 @@ if phase == 'valid' and epoch_acc > best_acc:
 - 3.def __init__(self, root_dir, ann_file, transform=None):咱们要根据自己任务重写
 - 4.def __getitem__(self, idx):根据自己任务，返回图像数据和标签数据
 
+## debug（libiomp5md.dll文件报错看过来）
+### 报错信息：
+```
+OMP: Error #15: Initializing libiomp5md.dll, but found libiomp5md.dll already initialized.
+OMP: Hint This means that multiple copies of the OpenMP runtime have been linked into the program. That is dangerous, since it can degrade performance or cause incorrect results. The best thing to do is to ensure that only a single OpenMP runtime is linked into the process, e.g. by avoiding static linking of the OpenMP runtime in any library. As an unsafe, unsupported, undocumented workaround you can set the environment variable KMP_DUPLICATE_LIB_OK=TRUE to allow the program to continue to execute, but that may cause crashes or silently produce incorrect results. For more information, please see http://www.intel.com/software/products/support/.
+```
+错误原因：
+问题出现主要是因为torch包中包含了名为libiomp5md.dll的文件，与Anaconda环境中的同一个文件出现了某种冲突，所以需要删除一个。
 
+### 临时解决方法：
+```python
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
+```
+这个方法会告诉 OpenMP 允许多个运行时库并存，但是它有潜在的性能损失，并且可能导致崩溃或结果不准确。
 
+### 根本解决方法
+我使用的是Anaconda环境，删除base环境中的文件，删除了C:\Users\98712\anaconda3\Library\bin\libiomp5md.dll
+将其放在C:\Users\98712\anaconda3\Library\bin\libiomp5md\libiomp5md.dll路径下。**之后使用base环境如果这个文件报错，将这个文件重新放回
+原来的路径中并且删除另外一个文件**
+
+解决方法网址:[网址1](https://blog.csdn.net/Victor_X/article/details/110082033?utm_medium=distribute.pc_relevant.none-task-blog-2%7Edefault%7EBlogCommendFromMachineLearnPai2%7Edefault-1.control&depth_1-utm_source=distribute.pc_relevant.none-task-blog-2%7Edefault%7EBlogCommendFromMachineLearnPai2%7Edefault-1.control)
+[网址2](https://zhuanlan.zhihu.com/p/371649016)
 
 
 
