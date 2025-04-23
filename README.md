@@ -146,3 +146,149 @@ class CNN(nn.Module):
         # stride=1,               #步长大小
         # padding=2               #周围补像素数量，为了保证输入输出的大小相同，输出为（16*28*28）
 ```
+
+# 04_图像识别模型与训练策略
+## 数据与任务
+数据存放在路径'./flower_data/'，其中有两个文件夹，分别为训练数据集与测试集。每个数据集中图片大小不同，以对应的子文件夹名称序号作为标签
+
+通过训练神经网络，做出102分类任务，分类出每种花的id，查询cat_to_name.json文件得到对应的花的名字
+## 训练策略
+数据增强策略
+```python
+from torchvision import transforms, models, datasets
+data_transforms = {
+    'train': 
+        transforms.Compose([
+        transforms.Resize([96, 96]),
+        transforms.RandomRotation(45),#随机旋转，-45到45度之间随机选
+        transforms.CenterCrop(64),#从中心开始裁剪
+        transforms.RandomHorizontalFlip(p=0.5),#随机水平翻转 选择一个概率概率
+        transforms.RandomVerticalFlip(p=0.5),#随机垂直翻转
+        transforms.ColorJitter(brightness=0.2, contrast=0.1, saturation=0.1, hue=0.1),#参数1为亮度，参数2为对比度，参数3为饱和度，参数4为色相
+        transforms.RandomGrayscale(p=0.025),#概率转换成灰度率，3通道就是R=G=B
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])#均值，标准差
+    ]),
+    'valid': 
+        transforms.Compose([
+        transforms.Resize([64, 64]),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ]),
+}
+```
+加载预训练模型模块
+```python
+from torchvision import transforms, models, datasets
+model_name = 'resnet'  #可选的比较多 ['resnet', 'alexnet', 'vgg', 'squeezenet', 'densenet', 'inception']
+#是否用人家训练好的特征来做
+feature_extract = True #都用人家特征，咱先不更新
+model_ft = models.resnet18()#18层的能快点，条件好点的也可以选152
+```
+先使用预训练模型训练修改之后的输出层，再解冻其他层，训练所有参数。
+
+
+## 代码
+
+加载通过文件夹结构组织数据方法
+```python
+import os
+from torchvision import transforms, models, datasets
+data_dir = './flower_data/'
+#数据加载，datasets.ImageFolder通过文件夹结构加载数据，加载为字典结构。ImageFolder类需要两个参数：root 和 transform。root是数据集根目录；transform指定对每个图像应该执行的预处理操作，例如调整大小、裁剪、翻转等。
+image_datasets = {x: datasets.ImageFolder(os.path.join(data_dir, x), data_transforms[x]) for x in ['train', 'valid']}
+```
+是否使用Gpu训练
+```python
+import  torch
+# 是否用GPU训练
+train_on_gpu = torch.cuda.is_available()
+
+if not train_on_gpu:
+    print('CUDA is not available.  Training on CPU ...')
+else:
+    print('CUDA is available!  Training on GPU ...')
+    
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+model_ft = model_ft.to(device)
+```
+
+学习率调度器
+```python
+scheduler = optim.lr_scheduler.StepLR(optimizer_ft, step_size=10, gamma=0.1)
+```
+- 每隔 step_size 个 epoch，将优化器的学习率乘以 gamma（即按一定比例衰减）。
+- optimizer_ft:已定义的优化器（如 torch.optim.SGD 或 torch.optim.Adam）。调度器会基于此优化器的当前学习率进行调整。
+
+保存训练结果
+```python
+if phase == 'valid' and epoch_acc > best_acc:
+    best_acc = epoch_acc
+    best_model_wts = copy.deepcopy(model.state_dict())
+    state = {
+        'state_dict': model.state_dict(),  # 字典里key就是各层的名字，值就是训练好的权重
+        'best_acc': best_acc,
+        'optimizer': optimizer.state_dict(),
+    }
+    torch.save(state, filename)
+```
+## debug
+### 首次执行代码下载预训练模型会遇到网络问题
+
+报错信息：URLError: urlopen error Remote end closed connection without response
+
+解决办法，找到报错信息中的下载路径与模型存储Downloading:
+"https://download.pytorch.org/models/resnet18-f37072fd.pth" to C:\Users\98712/.cache\torch\hub\checkpoints\resnet18-f37072fd.pth
+手动下载模型文件并将其保存在指定路径中，再次运行代码将会从本地加载预训练模型。
+
+## 结果展示
+| 模型名称     | 数据增强 | 加载预训练模型 | 训练输出层 | 输出层epoch | Resize  | time    | val_acc |   |   |   |   |   |   |
+|----------|------|---------|-------|----------|---------|---------|---------|---|---|---|---|---|---|
+| resnet18 | 是    | 是       | 是     | 10       | 96*96   | 5m35s   | 39.36%  |   |   |   |   |   |   |
+|          |      |         |       | 10       | 256*256 | 13m 1s  | 87.16％  |   |   |   |   |   |   |
+|          |      |         |       | 30       | 96*96   | 16m 27s | 41.19％  |   |   |   |   |   |   |
+|          |      |         |       | 30       | 256*256 | 43m 13s | 90.95%  |   |   |   |   |   |   |
+|          |      |         |       |          |         |         |         |   |   |   |   |   |   |
+|          |      |         |       |          |         |         |         |   |   |   |   |   |   |
+|          |      |         |       |          |         |         |         |   |   |   |   |   |   |
+|          |      |         | 训练所有层 | 所有层epoch | Resize  | time    | val_acc |   |   |   |   |   |   |
+|          |      |         | 是     | 10       | 96*96   | 5m 38s  | 76.77%  |   |   |   |   |   |   |
+|          |      |         |       | 10       | 256*256 | 16m 27s | 95.35%  |   |   |   |   |   |   |
+|          |      |         |       | 30       | 96*96   | 16m 50s | 78.24％  |   |   |   |   |   |   |
+|          |      |         |       | 30       | 256*256 | 46m 20s | 95.11%  |   |   |   |   |   |   |
+|          |      |         |       |          |         |         |         |   |   |   |   |   |   |
+|          |      |         |       |          |         |         |         |   |   |   |   |   |   |
+|          |      |         |       |          |         |         |         |   |   |   |   |   |   |
+|          |      |         |       |          |         |         |         |   |   |   |   |   |   |
+
+# 05_dataloader_自定义数据集
+
+## dataloader总体功能
+提供两个list，其中一个存储所有图像地址，另外一个存储所有的标签数据，要根据标号一一对应。
+
+
+- 1.注意要使用from torch.utils.data import Dataset, DataLoader
+- 2.类名定义class FlowerDataset(Dataset)，其中FlowerDataset可以改成自己的名字
+- 3.def __init__(self, root_dir, ann_file, transform=None):咱们要根据自己任务重写
+- 4.def __getitem__(self, idx):根据自己任务，返回图像数据和标签数据
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
