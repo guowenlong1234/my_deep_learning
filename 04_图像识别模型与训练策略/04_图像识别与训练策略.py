@@ -14,18 +14,54 @@ import copy
 import json
 from PIL import Image
 
-data_dir = './flower_data/'         #数据读取
-train_dir = data_dir + '/train'
-valid_dir = data_dir + '/valid'
+from torch.utils.data import Dataset, DataLoader
+
+data_dir = './flower_data/'
+train_dir = data_dir + '/train_filelist'
+valid_dir = data_dir + '/val_filelist'
+
 num_epochs = 10
 num_epochs_all = 10
 #训练参数
-batch_size = 1024
+batch_size = 64
 
 #数据增强策略参数
 DA_resize = 96
 DA_rotation = 45
 DA_centercrop = 64
+
+class FlowerDataset(Dataset):       #定义类名可以任意取
+    def __init__(self, root_dir, ann_file, transform=None):
+        self.ann_file = ann_file            #ann_file表示标签文件路径与文件名
+        self.root_dir = root_dir            #root_dir表示图片数据路径
+        self.img_label = self.load_annotations()    #构造字典，以图片文件路径为Key，图片标签为值
+        self.img = [os.path.join(self.root_dir, img) for img in list(self.img_label.keys())]        #取出Key值，加上根目录路径，构成图片路径
+        self.label = [label for label in list(self.img_label.values())]     #取出值，转化成标签值
+        self.transform = transform          #完成图像预处理
+
+    def __len__(self):
+        return len(self.img)
+
+    def __getitem__(self, idx):
+        image = Image.open(self.img[idx])           #每次调用随机生成一个idx索引，打开img文件，将文件数据存储在image中
+        label = self.label[idx]                     #取出对应的标签值
+        if self.transform:
+            image = self.transform(image)           #如果有预处理操作，完成图像的预处理
+        label = torch.from_numpy(np.array(label))   #标签值转化为tensor格式
+        return image, label
+
+    def load_annotations(self):
+        '''
+        完成图片的路径名称获取，空格分割，
+        :return: 返回字典，键为图片名，值为标签数据。
+        '''
+        data_infos = {}
+        with open(self.ann_file) as f:
+            samples = [x.strip().split(' ') for x in f.readlines()]
+            for filename, gt_label in samples:
+                data_infos[filename] = np.array(gt_label, dtype=np.int64)
+        return data_infos
+
 
 #采用数据增强策略
 data_transforms = {
@@ -50,11 +86,25 @@ data_transforms = {
 }
 
 #数据加载，datasets.ImageFolder通过文件夹结构加载数据，加载为字典结构。ImageFolder类需要两个参数：root 和 transform。root是数据集根目录；transform指定对每个图像应该执行的预处理操作，例如调整大小、裁剪、翻转等。
-image_datasets = {x: datasets.ImageFolder(os.path.join(data_dir, x), data_transforms[x]) for x in ['train', 'valid']}
-dataloaders = {x: torch.utils.data.DataLoader(image_datasets[x], batch_size=batch_size, shuffle=True) for x in ['train', 'valid']}
+# image_datasets = {x: datasets.ImageFolder(os.path.join(data_dir, x), data_transforms[x]) for x in ['train', 'valid']}
+# dataloaders = {x: torch.utils.data.DataLoader(image_datasets[x], batch_size=batch_size, shuffle=True) for x in ['train', 'valid']}
+train_dataset = FlowerDataset(root_dir=train_dir, ann_file = './flower_data/train.txt', transform=data_transforms['train'])
+val_dataset = FlowerDataset(root_dir=valid_dir, ann_file = './flower_data/val.txt', transform=data_transforms['valid'])
+#将两个数据集分别加载为dataloder格式
+train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True)
 
+image_datasets = {
+    'train':train_dataset
+    ,'valid':val_dataset
+}
+dataloaders = {
+    'train':train_loader,
+    'valid':val_loader
+}
+#到此为止，dataloader全部构造完毕，为了确保输入模型的正确，需要验证一下是否正确
 dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'valid']}         #dataset_sizes存储两个数据集数据个数
-class_names = image_datasets['train'].classes                                   #存储标签值
+# class_names = train_dataset.classes                                   #存储标签值
 
 #通过读取cat_to_name.json文件，存储ID对应的花朵名称，存储为字典结构，存储在cat_to_name
 with open('cat_to_name.json', 'r') as f:

@@ -221,7 +221,7 @@ scheduler = optim.lr_scheduler.StepLR(optimizer_ft, step_size=10, gamma=0.1)
 - optimizer_ft:已定义的优化器（如 torch.optim.SGD 或 torch.optim.Adam）。调度器会基于此优化器的当前学习率进行调整。
 
 保存训练结果
-```python
+```
 if phase == 'valid' and epoch_acc > best_acc:
     best_acc = epoch_acc
     best_model_wts = copy.deepcopy(model.state_dict())
@@ -232,6 +232,8 @@ if phase == 'valid' and epoch_acc > best_acc:
     }
     torch.save(state, filename)
 ```
+## 未解决的问题
+在训练过程中，显存占用率正常，CPU占用率也没有达到瓶颈，但是GPU占用率很低，而且会突然高一下，感觉应该是给GPU送数据速度跟不上，后来更新了dataloder加载方式也没什么改善，可能能通过将数据全部封装处理好一起放进内存再训练改善。
 ## debug
 ### 首次执行代码下载预训练模型会遇到网络问题
 
