@@ -50,22 +50,22 @@ ACT2FN = {"gelu": torch.nn.functional.gelu, "relu": torch.nn.functional.relu, "s
 
 
 class Attention(nn.Module):
-    def __init__(self, config, vis):
+    def __init__(self, config, vis):#初始化传入参数config, vis
         super(Attention, self).__init__()
         self.vis = vis
-        self.num_attention_heads = config.transformer["num_heads"]
-        self.attention_head_size = int(config.hidden_size / self.num_attention_heads)
-        self.all_head_size = self.num_attention_heads * self.attention_head_size
+        self.num_attention_heads = config.transformer["num_heads"]      #设置注意力机制的头数，在当前为12
+        self.attention_head_size = int(config.hidden_size / self.num_attention_heads)   #计算每个头应该有的特征维度
+        self.all_head_size = self.num_attention_heads * self.attention_head_size        #计算所有头合并起来的特征维度
 
-        self.query = Linear(config.hidden_size, self.all_head_size)
+        self.query = Linear(config.hidden_size, self.all_head_size)     #初始化三个个计算Q、K、V矩阵的全连接层
         self.key = Linear(config.hidden_size, self.all_head_size)
         self.value = Linear(config.hidden_size, self.all_head_size)
 
-        self.out = Linear(config.hidden_size, config.hidden_size)
-        self.attn_dropout = Dropout(config.transformer["attention_dropout_rate"])
+        self.out = Linear(config.hidden_size, config.hidden_size)       #初始化一个输出层，
+        self.attn_dropout = Dropout(config.transformer["attention_dropout_rate"])   #初始化两个dropout层
         self.proj_dropout = Dropout(config.transformer["attention_dropout_rate"])
 
-        self.softmax = Softmax(dim=-1)
+        self.softmax = Softmax(dim=-1)      #初始化激活函数
 
     def transpose_for_scores(self, x):
         new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
@@ -116,19 +116,19 @@ class Attention(nn.Module):
 
 
 class Mlp(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config):             #初始化传入参数config
         super(Mlp, self).__init__()
-        self.fc1 = Linear(config.hidden_size, config.transformer["mlp_dim"])
-        self.fc2 = Linear(config.transformer["mlp_dim"], config.hidden_size)
-        self.act_fn = ACT2FN["gelu"]
-        self.dropout = Dropout(config.transformer["dropout_rate"])
+        self.fc1 = Linear(config.hidden_size, config.transformer["mlp_dim"])        #线性层
+        self.fc2 = Linear(config.transformer["mlp_dim"], config.hidden_size)        #线性层
+        self.act_fn = ACT2FN["gelu"]                                                #激活函数层，选择激活函数gelu
+        self.dropout = Dropout(config.transformer["dropout_rate"])                  #设置dropout参数
 
-        self._init_weights()
+        self._init_weights()                            #初始化各个权重项
 
     def _init_weights(self):
-        nn.init.xavier_uniform_(self.fc1.weight)
-        nn.init.xavier_uniform_(self.fc2.weight)
-        nn.init.normal_(self.fc1.bias, std=1e-6)
+        nn.init.xavier_uniform_(self.fc1.weight)        #采用Xavier 初始化权重参数，它试图保持每一层的激活值和梯度的方差一致
+        nn.init.xavier_uniform_(self.fc2.weight)        #采用Xavier 初始化，它试图保持每一层的激活值和梯度的方差一致
+        nn.init.normal_(self.fc1.bias, std=1e-6)        #采用正态分布初始化偏置参数
         nn.init.normal_(self.fc2.bias, std=1e-6)
 
     def forward(self, x):
@@ -144,19 +144,21 @@ class Embeddings(nn.Module):
     """Construct the embeddings from patch, position embeddings.
     """
     def __init__(self, config, img_size, in_channels=3):
-        super(Embeddings, self).__init__()
-        self.hybrid = None
-        img_size = _pair(img_size)
+        super(Embeddings, self).__init__()#初始化函数是，传入参数config, img_size=img_size
+        self.hybrid = None#设置是否为混合模式
+        img_size = _pair(img_size)#调用的pytorch内置函数，这个函数通常会检查输入的 img_size 类型并进行相应的转换。例如：如果 img_size 是一个单一的整数，如 224，则 _pair(224) 会返回 (224, 224)，即假设图像的高度和宽度相等。如果 img_size 已经是一个二元组，例如 (224, 224)，则 _pair((224, 224)) 会直接返回 (224, 224)。
 
-        if config.patches.get("grid") is not None:
+        if config.patches.get("grid") is not None:#在所有的配置中并没有找到这个参数。暂时不清楚这个参数的作用
             grid_size = config.patches["grid"]
             patch_size = (img_size[0] // 16 // grid_size[0], img_size[1] // 16 // grid_size[1])
             n_patches = (img_size[0] // 16) * (img_size[1] // 16)
             self.hybrid = True
         else:
             patch_size = _pair(config.patches["size"])
+            #获取patch_size并且经过pair函数处理为元组类型
             n_patches = (img_size[0] // patch_size[0]) * (img_size[1] // patch_size[1])
-            self.hybrid = False
+            #计算出获取patch的数量，将其存储在n_patches变量中
+            self.hybrid = False#不是混合模式，只有单独的transformer模型
 
         if self.hybrid:
             self.hybrid_model = ResNetV2(block_units=config.resnet.num_layers,
@@ -166,10 +168,16 @@ class Embeddings(nn.Module):
                                        out_channels=config.hidden_size,
                                        kernel_size=patch_size,
                                        stride=patch_size)
+        #设置一个卷积层，卷积输入为in_channels=3，输出为模型的hidden_size，卷积核尺寸是与patch尺寸相同，滑动距离也是一个patch的尺寸，就是对每一个patch块做一下卷积操作
+
         self.position_embeddings = nn.Parameter(torch.zeros(1, n_patches+1, config.hidden_size))
+        #设置位置编码，初始化为全0张量，（batch，patch数量加1（因为cls_token），hidden_size)
+
         self.cls_token = nn.Parameter(torch.zeros(1, 1, config.hidden_size))
+        #初始化cls_token，初始化为全0向量，初始为全batch共享，后面通过self.cls_token.expand为每一个图片赋予自己的token。
 
         self.dropout = Dropout(config.transformer["dropout_rate"])
+        #初始化dropout参数
 
     def forward(self, x):
         print(x.shape)
@@ -196,12 +204,12 @@ class Embeddings(nn.Module):
 
 class Block(nn.Module):
     def __init__(self, config, vis):
-        super(Block, self).__init__()
-        self.hidden_size = config.hidden_size
-        self.attention_norm = LayerNorm(config.hidden_size, eps=1e-6)
-        self.ffn_norm = LayerNorm(config.hidden_size, eps=1e-6)
-        self.ffn = Mlp(config)
-        self.attn = Attention(config, vis)
+        super(Block, self).__init__()       #初始化传入参数config, vis
+        self.hidden_size = config.hidden_size                           #初始化hidden_size
+        self.attention_norm = LayerNorm(config.hidden_size, eps=1e-6)   #初始化一个归一化层，用于注意力机制的归一化
+        self.ffn_norm = LayerNorm(config.hidden_size, eps=1e-6)         #初始化一个归一化层，用于ffn
+        self.ffn = Mlp(config)           #初始化一个ffn层，其中包括两个线性层，一个激活函数，设置有dropout和初始化参数方法。
+        self.attn = Attention(config, vis)  #初始化一个attn注意力机制，包括头数，每个头的尺寸，所有头的尺寸和，计算QKV三个矩阵的全连接层，两个dropout层和激活函数
 
     def forward(self, x):
         print(x.shape)
@@ -297,14 +305,14 @@ class Block(nn.Module):
 
 
 class Encoder(nn.Module):
-    def __init__(self, config, vis):
+    def __init__(self, config, vis):        #初始化encoder，初始化传入参数config, vis
         super(Encoder, self).__init__()
         self.vis = vis
-        self.layer = nn.ModuleList()
-        self.encoder_norm = LayerNorm(config.hidden_size, eps=1e-6)
-        for _ in range(config.transformer["num_layers"]):
-            layer = Block(config, vis)
-            self.layer.append(copy.deepcopy(layer))
+        self.layer = nn.ModuleList()        #初始化一个layer作为模型容器，存储对应的层，可以像访问列表一样访问对应的层
+        self.encoder_norm = LayerNorm(config.hidden_size, eps=1e-6)#初始化一个归一化层，在采用的是LayerNorm归一化方法，即为对每个样本的特征归一化，与之对应的 Batch是对整个批次中的的每个特征进行归一化操作
+        for _ in range(config.transformer["num_layers"]):#"num_layers"有几层就在模型容器layer中添加几层Block
+            layer = Block(config, vis)      #初始化两个归一化层，一个ffn层和一个注意力机制层
+            self.layer.append(copy.deepcopy(layer))     #需要多少层，就在模型容器中存储多少层block
 
     def forward(self, hidden_states):
         print(hidden_states.shape)
@@ -318,10 +326,13 @@ class Encoder(nn.Module):
 
 
 class Transformer(nn.Module):
+    #在VisionTransformer中调用
+    #输入数据为x
+    #返回值为x，x, attn_weights
     def __init__(self, config, img_size, vis):
         super(Transformer, self).__init__()
-        self.embeddings = Embeddings(config, img_size=img_size)
-        self.encoder = Encoder(config, vis)
+        self.embeddings = Embeddings(config, img_size=img_size)     #完成Embeddings的初始化操作，主要有窗口卷积层，位置编码层，cls_token的初始化
+        self.encoder = Encoder(config, vis)     #初始化Encoder，包括8个block层，一个归一化层
 
     def forward(self, input_ids):
         embedding_output = self.embeddings(input_ids)
@@ -330,14 +341,16 @@ class Transformer(nn.Module):
 
 
 class VisionTransformer(nn.Module):
+    #调用时的传入参数：config模型类型, args.img_size图像尺寸大小, zero_head=True, num_classes=num_classes数据集类型，默认10
+    #返回值model
     def __init__(self, config, img_size=224, num_classes=21843, zero_head=False, vis=False):
         super(VisionTransformer, self).__init__()
-        self.num_classes = num_classes
-        self.zero_head = zero_head
-        self.classifier = config.classifier
+        self.num_classes = num_classes      #分类的任务数量，默认为使用cifer10数据集的10分类任务
+        self.zero_head = zero_head          #？
+        self.classifier = config.classifier #token？
 
-        self.transformer = Transformer(config, img_size, vis)
-        self.head = Linear(config.hidden_size, num_classes)
+        self.transformer = Transformer(config, img_size, vis)       #完成transform的主要初始化，包括Embeddings和Encoder
+        self.head = Linear(config.hidden_size, num_classes)         #初始化输出层，为一个全链接层
 
     def forward(self, x, labels=None):
         x, attn_weights = self.transformer(x)

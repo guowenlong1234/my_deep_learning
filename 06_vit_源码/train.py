@@ -64,16 +64,18 @@ def save_model(args, model):
 
 def setup(args):
     # Prepare model
+    #取出使用的那个模型
     config = CONFIGS[args.model_type]
-
+    #取出使用的数据集，默认cifar10有10分类，因此cifar10就是10
     num_classes = 10 if args.dataset == "cifar10" else 100
 
-    model = VisionTransformer(config, args.img_size, zero_head=True, num_classes=num_classes)
-    model.load_from(np.load(args.pretrained_dir))
-    model.to(args.device)
-    num_params = count_parameters(model)
+    model = VisionTransformer(config, args.img_size, zero_head=True, num_classes=num_classes)#完成了vit模型的初始化，包括输出层，encoder、decoder等内容
+    model.load_from(np.load(args.pretrained_dir))       #加载预训练模型
+    model.to(args.device)           #将模型装载进GPU中
+    num_params = count_parameters(model)#对模型所有的训练参数个数进行计数
 
-    logger.info("{}".format(config))
+
+    logger.info("{}".format(config))        #写入日志文件
     logger.info("Training parameters %s", args)
     logger.info("Total Parameter: \t%2.1fM" % num_params)
     print(num_params)
@@ -86,9 +88,10 @@ def count_parameters(model):
 
 
 def set_seed(args):
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
+    #设置随机初始化种子，保证在每次运行过程中的结果相同。
+    random.seed(args.seed)      #random模块随机种子确定
+    np.random.seed(args.seed)   #np.random模块随机初始化种子确定
+    torch.manual_seed(args.seed)#torch随机初始化种子确定
     if args.n_gpu > 0:
         torch.cuda.manual_seed_all(args.seed)
 
@@ -251,58 +254,78 @@ def main():
     # Required parameters
     parser.add_argument("--name", required=True,
                         help="Name of this run. Used for monitoring.")
+    #用于设置当前训练运行的名称。
     parser.add_argument("--dataset", choices=["cifar10", "cifar100"], default="cifar10",
                         help="Which downstream task.")
+    #指定训练数据集
     parser.add_argument("--model_type", choices=["ViT-B_16", "ViT-B_32", "ViT-L_16",
                                                  "ViT-L_32", "ViT-H_14", "R50-ViT-B_16"],
+    #指出使用的模型
                         default="ViT-B_16",
                         help="Which variant to use.")
     parser.add_argument("--pretrained_dir", type=str, default="checkpoint/ViT-B_16.npz",
                         help="Where to search for pretrained ViT models.")
+    #指定预训练模型路径
     parser.add_argument("--output_dir", default="output", type=str,
                         help="The output directory where checkpoints will be written.")
-
+    #指定模型输出路径
     parser.add_argument("--img_size", default=224, type=int,
                         help="Resolution size")
+    #指定输入图像尺寸大小
     parser.add_argument("--train_batch_size", default=16, type=int,
                         help="Total batch size for training.")
+    #指定训练集batch大小
     parser.add_argument("--eval_batch_size", default=64, type=int,
                         help="Total batch size for eval.")
+    #指定验证集batch大小
     parser.add_argument("--eval_every", default=100, type=int,
                         help="Run prediction on validation set every so many steps."
                              "Will always run one evaluation at the end of training.")
-
+    #指定多少步进行一次验证集验证
     parser.add_argument("--learning_rate", default=3e-2, type=float,
                         help="The initial learning rate for SGD.")
+    #指定学习率大小
     parser.add_argument("--weight_decay", default=0, type=float,
                         help="Weight deay if we apply some.")
+    #设置权重衰减策略
     parser.add_argument("--num_steps", default=10000, type=int,
                         help="Total number of training epochs to perform.")
+    #设置epochs
     parser.add_argument("--decay_type", choices=["cosine", "linear"], default="cosine",
                         help="How to decay the learning rate.")
+    #设置学习率衰减方式
     parser.add_argument("--warmup_steps", default=500, type=int,
                         help="Step of training to perform learning rate warmup for.")
+    #设置学习率预热的步数
     parser.add_argument("--max_grad_norm", default=1.0, type=float,
                         help="Max gradient norm.")
-
+    #设置最大梯度范围，超过这个最大梯度范围，将会被裁剪，防止梯度爆炸
     parser.add_argument("--local_rank", type=int, default=-1,
                         help="local_rank for distributed training on gpus")
+    #指定当前GPU的排序编号
     parser.add_argument('--seed', type=int, default=42,
                         help="random seed for initialization")
+    #设置随机种子，确保实验的可以复现性
     parser.add_argument('--gradient_accumulation_steps', type=int, default=1,
                         help="Number of updates steps to accumulate before performing a backward/update pass.")
+    #指定梯度累积的步数。每积累一定的步数后，再进行一次梯度更新。
     parser.add_argument('--fp16', action='store_true',
                         help="Whether to use 16-bit float precision instead of 32-bit")
+    #指定是否使用 16 位浮点数（FP16）来代替 32 位浮点数（FP32）。
     parser.add_argument('--fp16_opt_level', type=str, default='O2',
                         help="For fp16: Apex AMP optimization level selected in ['O0', 'O1', 'O2', and 'O3']."
                              "See details at https://nvidia.github.io/apex/amp.html")
+    #指定在使用 FP16 时，Apex AMP（Automatic Mixed Precision）优化的级别。不同级别代表不同的混合精度策略。
     parser.add_argument('--loss_scale', type=float, default=0,
                         help="Loss scaling to improve fp16 numeric stability. Only used when fp16 set to True.\n"
                              "0 (default value): dynamic loss scaling.\n"
                              "Positive power of 2: static loss scaling value.\n")
+    #在使用 FP16 时，用于设置损失缩放的大小，以避免数值不稳定的问题。
     args = parser.parse_args()
+    #载入参数
 
     # Setup CUDA, GPU & distributed training
+    #设置多卡训练相关信息
     if args.local_rank == -1:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         args.n_gpu = torch.cuda.device_count()
@@ -315,6 +338,7 @@ def main():
     args.device = device
 
     # Setup logging
+    #设置日志输出内容与要求
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
                         datefmt='%m/%d/%Y %H:%M:%S',
                         level=logging.INFO if args.local_rank in [-1, 0] else logging.WARN)
@@ -322,9 +346,11 @@ def main():
                    (args.local_rank, args.device, args.n_gpu, bool(args.local_rank != -1), args.fp16))
 
     # Set seed
+    #设置随机初始化的种子，保证每次的实验结果相同
     set_seed(args)
 
     # Model & Tokenizer Setup
+    #setup函数生成模型和参数组
     args, model = setup(args)
 
     # Training
