@@ -35,14 +35,15 @@ logger = logging.getLogger(__name__)
 """
 class AverageMeter(object):
     """Computes and stores the average and current value"""
+    #计算并存储平均值和当前值
     def __init__(self):
         self.reset()
 
     def reset(self):
-        self.val = 0
-        self.avg = 0
-        self.sum = 0
-        self.count = 0
+        self.val = 0    #当前批次的最新值
+        self.avg = 0    #当前所有更新值的加权平均值
+        self.sum = 0    #所有更新值的总和
+        self.count = 0  #更新值的计数
 
     def update(self, val, n=1):
         self.val = val
@@ -150,25 +151,27 @@ def valid(args, model, writer, test_loader, global_step):
 
 def train(args, model):
     """ Train the model """
-    if args.local_rank in [-1, 0]:
-        os.makedirs(args.output_dir, exist_ok=True)
-        writer = SummaryWriter(log_dir=os.path.join("logs", args.name))
+    if args.local_rank in [-1, 0]:          #判断当前进程是否为主进程，主进程则执行以下代码
+        os.makedirs(args.output_dir, exist_ok=True)         #创建输出路径，如果路径已经存在，不会报错
+        writer = SummaryWriter(log_dir=os.path.join("logs", args.name))     #写入日志文件
 
-    args.train_batch_size = args.train_batch_size // args.gradient_accumulation_steps
+    args.train_batch_size = args.train_batch_size // args.gradient_accumulation_steps       #对每个patch进行梯度累计，将每个patch分成很多的微patch，累计后进行反向传播，总体效果等同于每个patch都反向传播，降低了存储压力与运算次数
 
     # Prepare dataset
-    train_loader, test_loader = get_loader(args)
+    train_loader, test_loader = get_loader(args)        #获取数据集，获得两个dataloader
 
     # Prepare optimizer and scheduler
-    optimizer = torch.optim.SGD(model.parameters(),
-                                lr=args.learning_rate,
-                                momentum=0.9,
-                                weight_decay=args.weight_decay)
-    t_total = args.num_steps
+    #设置优化器
+    optimizer = torch.optim.SGD(model.parameters(),#采用SGD优化器，更新模型的所有参数
+                                lr=args.learning_rate,      #设置学习率
+                                momentum=0.9,               #设置优化器动量，防止陷入局部最小值，0.9为经验值
+                                weight_decay=args.weight_decay)#设置权重衰减值，避免模型权重值过大
+    t_total = args.num_steps    #总体步数epoch
+    #设置学习率调度器，选择学习率的变化策略
     if args.decay_type == "cosine":
-        scheduler = WarmupCosineSchedule(optimizer, warmup_steps=args.warmup_steps, t_total=t_total)
+        scheduler = WarmupCosineSchedule(optimizer, warmup_steps=args.warmup_steps, t_total=t_total)#采用余弦衰减策略，有预热过程
     else:
-        scheduler = WarmupLinearSchedule(optimizer, warmup_steps=args.warmup_steps, t_total=t_total)
+        scheduler = WarmupLinearSchedule(optimizer, warmup_steps=args.warmup_steps, t_total=t_total)#采用线性衰减策略，有预热过程
     """
     if args.fp16:
         model, optimizer = amp.initialize(models=model,
@@ -181,6 +184,7 @@ def train(args, model):
         model = DDP(model, message_size=250000000, gradient_predivide_factor=get_world_size())
     """
     # Train!
+    #开始训练
     logger.info("***** Running training *****")
     logger.info("  Total optimization steps = %d", args.num_steps)
     logger.info("  Instantaneous batch size per GPU = %d", args.train_batch_size)
@@ -188,33 +192,34 @@ def train(args, model):
                 args.train_batch_size * args.gradient_accumulation_steps * (
                     torch.distributed.get_world_size() if args.local_rank != -1 else 1))
     logger.info("  Gradient Accumulation steps = %d", args.gradient_accumulation_steps)
-
-    model.zero_grad()
-    set_seed(args)  # Added here for reproducibility (even between python 2 and 3)
+    #日志操作，保存训练相关信息
+    model.zero_grad()   #累计梯度清零，开始训练
+    set_seed(args)  #固定随机初始化的种子，保证实验的可重复性# Added here for reproducibility (even between python 2 and 3)
     losses = AverageMeter()
-    global_step, best_acc = 0, 0
+    global_step, best_acc = 0, 0    #总步数、最好的准确率初始化为0
     while True:
-        model.train()
+        model.train()#进入训练模式
+        #设置进度条显示，显示当前训练进度等信息
         epoch_iterator = tqdm(train_loader,
                               desc="Training (X / X Steps) (loss=X.X)",
                               bar_format="{l_bar}{r_bar}",
-                              dynamic_ncols=True,
-                              disable=args.local_rank not in [-1, 0])
-        for step, batch in enumerate(epoch_iterator):
-            batch = tuple(t.to(args.device) for t in batch)
-            x, y = batch
-            loss = model(x, y)
+                              dynamic_ncols=True,       #允许根据终端调整进度条长度
+                              disable=args.local_rank not in [-1, 0])#不在主进程则禁用进度条
+        for step, batch in enumerate(epoch_iterator):#epoch_iterator是前面创建的进度条迭代器，提供batch，获取batch的数据与索引
+            batch = tuple(t.to(args.device) for t in batch)#将当前数据转载金对应的设备中
+            x, y = batch    #从batch中取出数据与标签
+            loss = model(x, y)  #调用模型，计算损失值，返回损失值
 
-            if args.gradient_accumulation_steps > 1:
+            if args.gradient_accumulation_steps > 1:        #检测是否到达反向传播点
                 loss = loss / args.gradient_accumulation_steps
-            if args.fp16:
+            if args.fp16:       #检测是否采用16位精度
                 with amp.scale_loss(loss, optimizer) as scaled_loss:
                     scaled_loss.backward()
             else:
-                loss.backward()
+                loss.backward()     #进行反向传播更新参数
 
-            if (step + 1) % args.gradient_accumulation_steps == 0:
-                losses.update(loss.item()*args.gradient_accumulation_steps)
+            if (step + 1) % args.gradient_accumulation_steps == 0:#检测是否到达了累计批次数量，如果到达了就执行一此更新
+                losses.update(loss.item()*args.gradient_accumulation_steps)#将当前的损失值等信息都更新一下
                 if args.fp16:
                     torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.max_grad_norm)
                 else:
@@ -354,7 +359,7 @@ def main():
     args, model = setup(args)
 
     # Training
-    train(args, model)
+    train(args, model)      #模型训练函数
 
 
 if __name__ == "__main__":
