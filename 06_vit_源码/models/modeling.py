@@ -69,49 +69,48 @@ class Attention(nn.Module):
 
     def transpose_for_scores(self, x):#三次调用分别输入通过全连接层得到的qkv三个向量
         new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)#将x的最后一个维度去除，更换为（头数，头尺寸维度）
-        print(new_x_shape)
+
         x = x.view(*new_x_shape)#将x向量重组为多头
-        print(x.shape)
-        print(x.permute(0, 2, 1, 3).shape)
+
         return x.permute(0, 2, 1, 3)    #交换x向量的维度
 
     def forward(self, hidden_states):#调用传入参数，经过归一化操作的x
-        print(hidden_states.shape)  #
+
         mixed_query_layer = self.query(hidden_states)   #通过q全连接层生成q向量
-        print(mixed_query_layer.shape)                  #通过k全连接层生成k向量
+                #通过k全连接层生成k向量
         mixed_key_layer = self.key(hidden_states)
-        print(mixed_key_layer.shape)
+
         mixed_value_layer = self.value(hidden_states)   #通过v全连接层生成v向量
-        print(mixed_value_layer.shape)
+
 
         query_layer = self.transpose_for_scores(mixed_query_layer)#生成q向量的多头形式（batch，头数，patch，头尺寸）
-        print(query_layer.shape)
+
         key_layer = self.transpose_for_scores(mixed_key_layer)
-        print(key_layer.shape)
+
         value_layer = self.transpose_for_scores(mixed_value_layer)
-        print(value_layer.shape)
+
 
         attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))#用q向量取乘以每一个k向量，得到注意力矩阵
-        print(attention_scores.shape)
+
         attention_scores = attention_scores / math.sqrt(self.attention_head_size)#除以根号下的头尺寸，排除因为头尺寸带来的数据大小波动
-        print(attention_scores.shape)
+
         attention_probs = self.softmax(attention_scores)    #通过一个softmax激活函数
-        print(attention_probs.shape)
+
         weights = attention_probs if self.vis else None     #可视化内容，暂时不管
         attention_probs = self.attn_dropout(attention_probs)#将最后attention输出结果dropout一下
-        print(attention_probs.shape)
+
 
         context_layer = torch.matmul(attention_probs, value_layer)  #最后得到的结果再与v向量相乘
-        print(context_layer.shape)
+
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()#交换矩阵维度，会导致再内存中不是连续的矩阵存储，通过contiguous()方法，将矩阵调整为连续存储空间的矩阵
-        print(context_layer.shape)
+
         new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)#构建一个新的矩阵形状，取出原来矩阵的前两维度，加上总头尺寸的维度，方便后续将多头合并
         context_layer = context_layer.view(*new_context_layer_shape)#重新调整矩阵维度，将多头合并
-        print(context_layer.shape)
+
         attention_output = self.out(context_layer)#再通过一个全连接层
-        print(attention_output.shape)
+
         attention_output = self.proj_dropout(attention_output)#最终结果dropout一下
-        print(attention_output.shape)
+
         return attention_output, weights#返回通过qkv计算得到的注意力结果。weights与可视化相关，暂时不管
 
 
@@ -180,25 +179,21 @@ class Embeddings(nn.Module):
         #初始化dropout参数
 
     def forward(self, x):
-        print(x.shape)      #调用时传入参数x(batch,channel,size,size)
+        #调用时传入参数x(batch,channel,size,size)
         B = x.shape[0]      #取出batch尺寸
         cls_tokens = self.cls_token.expand(B, -1, -1)   #将cls扩充到每一张图片，其他维度保持不变
-        print(cls_tokens.shape)
+
         if self.hybrid:     #决定是否使用混合模型，是否经过CNN处理
             x = self.hybrid_model(x)
         x = self.patch_embeddings(x)#对x进行一个卷积层操作，分割为每个patch，卷积核大小为patch的尺寸(batch,channel,size,size)->（batch，hiddensize，patch_num,patch_num)
-        print(x.shape)
+
         x = x.flatten(2)#从第二维度开始，后面的维度进行展开，展开为1维（batch，hiddensize，patch_num,patch_num)->（batch，hiddensize，patch_num*patch_num）
-        print(x.shape)
+
         x = x.transpose(-1, -2)#交换最后两个维度不改变数据，（batch，hiddensize，patch_num*patch_num)->（batch，patch_num^2,hiddensize)
-        print(x.shape)
         x = torch.cat((cls_tokens, x), dim=1)#将cls_token拼接在x上，拼接维度为第1维度，应保证除了拼接维度以外其他维度相同（batch，patch_num^2,hiddensize)->（batch，patch_num^2+1,hiddensize)
-        print(x.shape)
 
         embeddings = x + self.position_embeddings       #加上位置编码信息，每次输入的图像都可以获取对应的位置编码
-        print(embeddings.shape)
         embeddings = self.dropout(embeddings)           #随机杀死些神经元
-        print(embeddings.shape)
         return embeddings
 
 
@@ -212,26 +207,20 @@ class Block(nn.Module):
         self.attn = Attention(config, vis)  #初始化一个attn注意力机制，包括头数，每个头的尺寸，所有头的尺寸和，计算QKV三个矩阵的全连接层，两个dropout层和激活函数
 
     def forward(self, x):#调用传入参数为hidden_states
-        print(x.shape)
         h = x           #保存当前x用于一会进行残差链接
         x = self.attention_norm(x)      #对x进行一次归一化操作
-        print(x.shape)
         x, weights = self.attn(x)#返回通过qkv计算得到的注意力结果，weights与可视化有关，暂时不管
         x = x + h       #进行残差链接
-        print(x.shape)
 
         h = x       #备份当前x，进行残差链接
         x = self.ffn_norm(x)    #经过归一化操作
-        print(x.shape)
         x = self.ffn(x) #经过ffn层，其中有两个全连接层，中间夹着一个隐藏层，隐藏层尺寸为3017，有激活函数与dropout
-        print(x.shape)
         x = x + h       #进行残差链接
-        print(x.shape)
         return x, weights#weight与可视化相关
 
-    def load_from(self, weights, n_block):
-        ROOT = f"Transformer/encoderblock_{n_block}"
-        with torch.no_grad():
+    def load_from(self, weights, n_block):#这个函数完成了对所有的block权重项的加载
+        ROOT = f"Transformer/encoderblock_{n_block}"#一个动态字符串，会被替换成n_block
+        with torch.no_grad():       #禁止梯度更新
             """ 
             linux下路径按照这个
             
@@ -268,17 +257,17 @@ class Block(nn.Module):
             self.attention_norm.bias.copy_(np2th(weights[pjoin(ROOT, ATTENTION_NORM, "bias")]))
             self.ffn_norm.weight.copy_(np2th(weights[pjoin(ROOT, MLP_NORM, "scale")]))
             self.ffn_norm.bias.copy_(np2th(weights[pjoin(ROOT, MLP_NORM, "bias")]))
-            """
+            """#加载kqv与输出层3个矩阵的权重参数
             query_weight = np2th(weights[ROOT + "/" + ATTENTION_Q + "/" + "kernel"]).view(self.hidden_size, self.hidden_size).t()
             key_weight = np2th(weights[ROOT + "/" +  ATTENTION_K+ "/" + "kernel"]).view(self.hidden_size, self.hidden_size).t()
             value_weight = np2th(weights[ROOT + "/" +  ATTENTION_V+"/" + "kernel"]).view(self.hidden_size, self.hidden_size).t()
             out_weight = np2th(weights[ROOT + "/" + ATTENTION_OUT+"/" + "kernel"]).view(self.hidden_size, self.hidden_size).t()
-
+            #加载kqv与输出层三层的偏置参数
             query_bias = np2th(weights[ROOT + "/" +  ATTENTION_Q+"/" + "bias"]).view(-1)
             key_bias = np2th(weights[ROOT + "/" +  ATTENTION_K+"/" + "bias"]).view(-1)
             value_bias = np2th(weights[ROOT + "/" +  ATTENTION_V+"/" + "bias"]).view(-1)
             out_bias = np2th(weights[ROOT + "/" +  ATTENTION_OUT+"/" + "bias"]).view(-1)
-
+            #将上面得到的权重与偏置加载到当前模型中
             self.attn.query.weight.copy_(query_weight)
             self.attn.key.weight.copy_(key_weight)
             self.attn.value.weight.copy_(value_weight)
@@ -287,17 +276,17 @@ class Block(nn.Module):
             self.attn.key.bias.copy_(key_bias)
             self.attn.value.bias.copy_(value_bias)
             self.attn.out.bias.copy_(out_bias)
-
+            #加载mlp权重参数与偏置参数
             mlp_weight_0 = np2th(weights[ROOT + "/" +  FC_0+"/" + "kernel"]).t()
             mlp_weight_1 = np2th(weights[ROOT + "/" +  FC_1+"/" + "kernel"]).t()
             mlp_bias_0 = np2th(weights[ROOT + "/" +  FC_0+"/" +"bias"]).t()
             mlp_bias_1 = np2th(weights[ROOT + "/" +  FC_1+"/" +"bias"]).t()
-
+            #加载ffn偏置参数与权重参数
             self.ffn.fc1.weight.copy_(mlp_weight_0)
             self.ffn.fc2.weight.copy_(mlp_weight_1)
             self.ffn.fc1.bias.copy_(mlp_bias_0)
             self.ffn.fc2.bias.copy_(mlp_bias_1)
-
+            #加载两个归一化层的权重和偏置参数
             self.attention_norm.weight.copy_(np2th(weights[ROOT + "/" +  ATTENTION_NORM+"/" + "scale"]))
             self.attention_norm.bias.copy_(np2th(weights[ROOT + "/" + ATTENTION_NORM+"/" +  "bias"]))
             self.ffn_norm.weight.copy_(np2th(weights[ROOT + "/" + MLP_NORM+"/" +  "scale"]))
@@ -315,7 +304,7 @@ class Encoder(nn.Module):
             self.layer.append(copy.deepcopy(layer))     #需要多少层，就在模型容器中存储多少层block
 
     def forward(self, hidden_states):#调用传入信息为embedding_output，包括cls和位置编码的序列
-        print(hidden_states.shape)
+
         attn_weights = []   #用于可视化展示的参数，暂时不管
         for layer_block in self.layer:#模型容器中有几层block就执行几层
             hidden_states, weights = layer_block(hidden_states)#输出为每个block输出，输入-归一化-attention-归一化-ffn执行一次
@@ -346,70 +335,68 @@ class VisionTransformer(nn.Module):
     def __init__(self, config, img_size=224, num_classes=21843, zero_head=False, vis=False):
         super(VisionTransformer, self).__init__()
         self.num_classes = num_classes      #分类的任务数量，默认为使用cifer10数据集的10分类任务
-        self.zero_head = zero_head          #？
-        self.classifier = config.classifier #token？
+        self.zero_head = zero_head          #控制是否加载头部层权重，也就是输出层的权重
+        self.classifier = config.classifier #token？，最终的分类头是token吗，表示最终分类的依据
 
         self.transformer = Transformer(config, img_size, vis)       #完成transform的主要初始化，包括Embeddings和Encoder
         self.head = Linear(config.hidden_size, num_classes)         #初始化输出层，为一个全链接层
 
     def forward(self, x, labels=None):  #调用时传入两个参数（x，y）
         x, attn_weights = self.transformer(x)   #最终返回经过多个block的encoded，attn_weights为可视化参数，暂时为0
-        print(x.shape)
         logits = self.head(x[:, 0])         #取出cls_token，经过全连接层进行十分类
-        print(logits.shape)
 
         if labels is not None:#如果没有输入标签值，说明是在验证阶段，直接返回十分类结果即可，有标签值说明在训练模式
             loss_fct = CrossEntropyLoss()   #计算损失函数
             loss = loss_fct(logits.view(-1, self.num_classes), labels.view(-1))#logits.view(-1, self.num_classes)将logits变成一个二维的张量，第二个维度为num_classes，其余维度通过计算获取
             return loss     #返回损失值
         else:
-            return logits, attn_weights
+            return logits, attn_weights     #在训练集，直接返回预测概率值
 
     def load_from(self, weights):
-        with torch.no_grad():
-            if self.zero_head:
+        with torch.no_grad():       #禁用梯度计算
+            if self.zero_head:      #判断是否加载需要头部层的权重参数
                 nn.init.zeros_(self.head.weight)
-                nn.init.zeros_(self.head.bias)
+                nn.init.zeros_(self.head.bias)#将输出层的所有权重和偏置设置为0
             else:
-                self.head.weight.copy_(np2th(weights["head/kernel"]).t())
-                self.head.bias.copy_(np2th(weights["head/bias"]).t())
+                self.head.weight.copy_(np2th(weights["head/kernel"]).t())       #np2th从 numpy 数组转换为 PyTorch 张量，通过copy_方法赋值给self.head.weight..t()表示矩阵转置，确保维度相同。加载输出层权重
+                self.head.bias.copy_(np2th(weights["head/bias"]).t())           #加载输出层偏置
 
-            self.transformer.embeddings.patch_embeddings.weight.copy_(np2th(weights["embedding/kernel"], conv=True))
+            self.transformer.embeddings.patch_embeddings.weight.copy_(np2th(weights["embedding/kernel"], conv=True))    #加载embedding层权重
             self.transformer.embeddings.patch_embeddings.bias.copy_(np2th(weights["embedding/bias"]))
-            self.transformer.embeddings.cls_token.copy_(np2th(weights["cls"]))
-            self.transformer.encoder.encoder_norm.weight.copy_(np2th(weights["Transformer/encoder_norm/scale"]))
+            self.transformer.embeddings.cls_token.copy_(np2th(weights["cls"]))#加载cls权重
+            self.transformer.encoder.encoder_norm.weight.copy_(np2th(weights["Transformer/encoder_norm/scale"]))    #加载归一化层权重
             self.transformer.encoder.encoder_norm.bias.copy_(np2th(weights["Transformer/encoder_norm/bias"]))
 
-            posemb = np2th(weights["Transformer/posembed_input/pos_embedding"])
-            posemb_new = self.transformer.embeddings.position_embeddings
-            if posemb.size() == posemb_new.size():
+            posemb = np2th(weights["Transformer/posembed_input/pos_embedding"])     #加载位置编码权重
+            posemb_new = self.transformer.embeddings.position_embeddings            #取出当前模型中的位置编码
+            if posemb.size() == posemb_new.size():      #如果位置编码维度相同，直接复制，维度不同，需要做一些调整操作
                 self.transformer.embeddings.position_embeddings.copy_(posemb)
             else:
-                logger.info("load_pretrained: resized variant: %s to %s" % (posemb.size(), posemb_new.size()))
-                ntok_new = posemb_new.size(1)
+                logger.info("load_pretrained: resized variant: %s to %s" % (posemb.size(), posemb_new.size()))#打印加载的原始位置嵌入（posemb）和调整后的位置嵌入（posemb_new）的尺寸
+                ntok_new = posemb_new.size(1)       #从位置编码信息中取出第1个维度，代表了token的数量，在当前模型中是197
 
-                if self.classifier == "token":
-                    posemb_tok, posemb_grid = posemb[:, :1], posemb[0, 1:]
-                    ntok_new -= 1
+                if self.classifier == "token":      #如果分类头是token，要取出cls_token存在posemb_tok，剩余部分存在posemb_grid
+                    posemb_tok, posemb_grid = posemb[:, :1], posemb[0, 1:]#切片操作[start:end:step]
+                    ntok_new -= 1                   #取出来一个，维度少1
                 else:
-                    posemb_tok, posemb_grid = posemb[:, :0], posemb[0]
+                    posemb_tok, posemb_grid = posemb[:, :0], posemb[0]#取出第一个维度的元素，分类头不是token的话，只是用posemb_grid
 
-                gs_old = int(np.sqrt(len(posemb_grid)))
-                gs_new = int(np.sqrt(ntok_new))
+                gs_old = int(np.sqrt(len(posemb_grid)))     #通过token维度计算网格尺寸，表明原来图像每行每列有多少个patch
+                gs_new = int(np.sqrt(ntok_new))             #现在的每行每列应该有14个patch
                 print('load_pretrained: grid-size from %s to %s' % (gs_old, gs_new))
-                posemb_grid = posemb_grid.reshape(gs_old, gs_old, -1)
+                posemb_grid = posemb_grid.reshape(gs_old, gs_old, -1)#将原来的矩阵维度变更成24*24*hiddensize的维度
 
-                zoom = (gs_new / gs_old, gs_new / gs_old, 1)
-                posemb_grid = ndimage.zoom(posemb_grid, zoom, order=1)
-                posemb_grid = posemb_grid.reshape(1, gs_new * gs_new, -1)
+                zoom = (gs_new / gs_old, gs_new / gs_old, 1)#需要对网格进行缩放，计算每个维度的缩放因子
+                posemb_grid = ndimage.zoom(posemb_grid, zoom, order=1)#使用ndimage.zoom函数对posemb_grid进行的缩放（缩放矩阵，缩放因子，插值方法）order=1表示插值方式为线性插值）
+                posemb_grid = posemb_grid.reshape(1, gs_new * gs_new, -1)#重新将矩阵patch维度变回1维
                 posemb = np.concatenate([posemb_tok, posemb_grid], axis=1)
-                self.transformer.embeddings.position_embeddings.copy_(np2th(posemb))
+                self.transformer.embeddings.position_embeddings.copy_(np2th(posemb))#重新将头部cls拼接上去，拼接维度为1维度，在将数据载入模型
 
-            for bname, block in self.transformer.encoder.named_children():
+            for bname, block in self.transformer.encoder.named_children():  #named_children()它会返回该模块下所有子模块的名称和模块本身的元组
                 for uname, unit in block.named_children():
-                    unit.load_from(weights, n_block=uname)
+                    unit.load_from(weights, n_block=uname)  #对每一个block加载权重项
 
-            if self.transformer.embeddings.hybrid:
+            if self.transformer.embeddings.hybrid:#以下是混合模型采用的方法
                 self.transformer.embeddings.hybrid_model.root.conv.weight.copy_(np2th(weights["conv_root/kernel"], conv=True))
                 gn_weight = np2th(weights["gn_root/scale"]).view(-1)
                 gn_bias = np2th(weights["gn_root/bias"]).view(-1)
