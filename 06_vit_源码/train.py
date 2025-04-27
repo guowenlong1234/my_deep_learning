@@ -53,14 +53,14 @@ class AverageMeter(object):
 
 
 def simple_accuracy(preds, labels):
-    return (preds == labels).mean()
+    return (preds == labels).mean() #检查标签值是否相等，.mean() 是对布尔数组求平均值操作，返回为准确率平均值
 
 
-def save_model(args, model):
-    model_to_save = model.module if hasattr(model, 'module') else model
-    model_checkpoint = os.path.join(args.output_dir, "%s_checkpoint.bin" % args.name)
-    torch.save(model_to_save.state_dict(), model_checkpoint)
-    logger.info("Saved model checkpoint to [DIR: %s]", args.output_dir)
+def save_model(args, model):#调用时传入参数args, model
+    model_to_save = model.module if hasattr(model, 'module') else model     #如果模型进行了分布式训练，可能会被包装，这句意义在于无论模式是否被包装，都可以保存正确的模型
+    model_checkpoint = os.path.join(args.output_dir, "%s_checkpoint.bin" % args.name)   #构建一个模型保存路径
+    torch.save(model_to_save.state_dict(), model_checkpoint)#.state_dict()返回模型的所有可学习参数，保存到对应的路径之中
+    logger.info("Saved model checkpoint to [DIR: %s]", args.output_dir)     #打印日志消息，提示保存路径
 
 
 def setup(args):
@@ -79,7 +79,7 @@ def setup(args):
     logger.info("{}".format(config))        #写入日志文件
     logger.info("Training parameters %s", args)
     logger.info("Total Parameter: \t%2.1fM" % num_params)
-    print(num_params)
+
     return args, model
 
 
@@ -97,48 +97,48 @@ def set_seed(args):
         torch.cuda.manual_seed_all(args.seed)
 
 
-def valid(args, model, writer, test_loader, global_step):
+def valid(args, model, writer, test_loader, global_step):#调用传入参数args, model, writer, test_loader, global_step
     # Validation!
-    eval_losses = AverageMeter()
-
+    eval_losses = AverageMeter()        #实例化一个验证集的损失记录器
+    #进行日志操作
     logger.info("***** Running Validation *****")
     logger.info("  Num steps = %d", len(test_loader))
     logger.info("  Batch size = %d", args.eval_batch_size)
-
+    #进入验证模式
     model.eval()
     all_preds, all_label = [], []
-    epoch_iterator = tqdm(test_loader,
-                          desc="Validating... (loss=X.X)",
-                          bar_format="{l_bar}{r_bar}",
-                          dynamic_ncols=True,
-                          disable=args.local_rank not in [-1, 0])
-    loss_fct = torch.nn.CrossEntropyLoss()
-    for step, batch in enumerate(epoch_iterator):
-        batch = tuple(t.to(args.device) for t in batch)
-        x, y = batch
-        with torch.no_grad():
-            logits = model(x)[0]
+    epoch_iterator = tqdm(test_loader,      #设置一个验证集进度条迭代对象
+                          desc="Validating... (loss=X.X)",  #设置内容
+                          bar_format="{l_bar}{r_bar}",      #设置布局
+                          dynamic_ncols=True,               #允许根据设备调节宽度
+                          disable=args.local_rank not in [-1, 0])#非主进程禁用
+    loss_fct = torch.nn.CrossEntropyLoss()  #实例化一个损失函数，采用交叉熵函数计算损失
+    for step, batch in enumerate(epoch_iterator):   #从迭代器中取出迭代对象的数据
+        batch = tuple(t.to(args.device) for t in batch) #将内容装载进gpu，batch中有两个数列，一个存储数据，另外一个存储标签值
+        x, y = batch        #x存储数据，y存储标签
+        with torch.no_grad():   #进入推理模式，禁用梯度计算
+            logits = model(x)[0]    #将x作为输入，输入模型进行推理，返回值为logits, attn_weights，取出第一个（batch，num_classes），表示每个样本数据所属各个类别的概率
 
-            eval_loss = loss_fct(logits, y)
-            eval_losses.update(eval_loss.item())
+            eval_loss = loss_fct(logits, y)     #将预测值与标签值输入损失函数，计算模型损失
+            eval_losses.update(eval_loss.item())#更新验证集结果存储
 
-            preds = torch.argmax(logits, dim=-1)
+            preds = torch.argmax(logits, dim=-1)    #在最后一个维度上返回最大值所处的索引，方便后续计算准确率
 
-        if len(all_preds) == 0:
-            all_preds.append(preds.detach().cpu().numpy())
-            all_label.append(y.detach().cpu().numpy())
-        else:
+        if len(all_preds) == 0: #判断是不是第一次进入验证阶段，如果是第一次进入验证阶段
+            all_preds.append(preds.detach().cpu().numpy())  #将输出结果与计算图断开连接，装载进入cpu，转化成numpy数组格式，再加入到all_preds
+            all_label.append(y.detach().cpu().numpy())      #同样的操作，将标签也放入all_label
+        else:       #如果不是第一次进入验证阶段
             all_preds[0] = np.append(
                 all_preds[0], preds.detach().cpu().numpy(), axis=0
-            )
+            )       #将本次训练的结果追加到all_label的第一个元素中，如果不是使用追加，会再新建一个列表来存储
             all_label[0] = np.append(
                 all_label[0], y.detach().cpu().numpy(), axis=0
-            )
+            )       #将本次训练的标签追加到all_label的第一个元素中
         epoch_iterator.set_description("Validating... (loss=%2.5f)" % eval_losses.val)
-
-    all_preds, all_label = all_preds[0], all_label[0]
-    accuracy = simple_accuracy(all_preds, all_label)
-
+                    #更新进度条迭代器，显示信息
+    all_preds, all_label = all_preds[0], all_label[0]       #取出训练的结果和对应的标签
+    accuracy = simple_accuracy(all_preds, all_label)#计算出准确率，结果存储在accuracy中
+    #操作日志
     logger.info("\n")
     logger.info("Validation Results")
     logger.info("Global Steps: %d" % global_step)
@@ -146,7 +146,7 @@ def valid(args, model, writer, test_loader, global_step):
     logger.info("Valid Accuracy: %2.5f" % accuracy)
 
     writer.add_scalar("test/accuracy", scalar_value=accuracy, global_step=global_step)
-    return accuracy
+    return accuracy #返回验证准确率
 
 
 def train(args, model):
@@ -223,33 +223,33 @@ def train(args, model):
                 if args.fp16:
                     torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.max_grad_norm)
                 else:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
-                scheduler.step()
-                optimizer.step()
-                optimizer.zero_grad()
-                global_step += 1
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)  #进行梯度裁剪，防止出现梯度爆炸，参见内容为model.parameters()模型所有参数，参见范围为args.max_grad_norm，超出这个范围进行裁剪
+                scheduler.step()        #学习率调度器进行一步
+                optimizer.step()        #优化器执行一步
+                optimizer.zero_grad()   #优化器累计梯度清零
+                global_step += 1        #步数计数
 
-                epoch_iterator.set_description(
+                epoch_iterator.set_description(     #.set_description设置一个可以动态更新的文本标题，显示现在的训练信息，包括损失以及训练进程
                     "Training (%d / %d Steps) (loss=%2.5f)" % (global_step, t_total, losses.val)
                 )
-                if args.local_rank in [-1, 0]:
+                if args.local_rank in [-1, 0]:      #如果是主进程，开始进行日志操作，记录当前损失值，全局步数，学习率等信息
                     writer.add_scalar("train/loss", scalar_value=losses.val, global_step=global_step)
                     writer.add_scalar("train/lr", scalar_value=scheduler.get_lr()[0], global_step=global_step)
-                if global_step % args.eval_every == 0 and args.local_rank in [-1, 0]:
-                    accuracy = valid(args, model, writer, test_loader, global_step)
-                    if best_acc < accuracy:
-                        save_model(args, model)
-                        best_acc = accuracy
-                    model.train()
+                if global_step % args.eval_every == 0 and args.local_rank in [-1, 0]:   #检查训练轮数是否到达验证集次数，
+                    accuracy = valid(args, model, writer, test_loader, global_step) #调用验证函数，运行验证集，返回验证准确率
+                    if best_acc < accuracy:     #如果本轮验证集效果更好
+                        save_model(args, model) #保存模型
+                        best_acc = accuracy     #更新最优模型的准确率
+                    model.train()               #恢复训练模式
 
-                if global_step % t_total == 0:
+                if global_step % t_total == 0:  #如果完成了训练，跳出循环
                     break
-        losses.reset()
+        losses.reset()  #损失存储器置零
         if global_step % t_total == 0:
-            break
+            break   #继续跳出，完成训练
 
-    if args.local_rank in [-1, 0]:
-        writer.close()
+    if args.local_rank in [-1, 0]:  #在主进程进行操作
+        writer.close()  #关闭日志，保存有所信息
     logger.info("Best Accuracy: \t%f" % best_acc)
     logger.info("End Training!")
 
