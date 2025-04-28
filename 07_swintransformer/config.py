@@ -184,14 +184,14 @@ def _update_config_from_file(config, cfg_file):
     config.freeze()
 
 
-def update_config(config, args):
+def update_config(config, args):        #更新配置文件，传入参数一个CfgNode类，一个args
     _update_config_from_file(config, args.cfg)
 
     config.defrost()
     if args.opts:
         config.merge_from_list(args.opts)
 
-    # merge from specific arguments
+    # merge from specific arguments#将命令行的参数一一对应的写入配置文件中
     if args.batch_size:
         config.DATA.BATCH_SIZE = args.batch_size
     if args.data_path:
@@ -222,7 +222,7 @@ def update_config(config, args):
 
     # output folder
     config.OUTPUT = os.path.join(config.OUTPUT, config.MODEL.NAME, config.TAG)
-
+    #锁定配置文件，在之后的运行中防止配置文件被修改
     config.freeze()
 
 
@@ -230,7 +230,7 @@ def get_config(args):
     """Get a yacs CfgNode object with default values."""
     # Return a clone so that the defaults will not be altered
     # This is for the "local variable" use pattern
-    config = _C.clone()
-    update_config(config, args)
+    config = _C.clone()             #定义一个CfgNode类，用于管理配置文件，表示从_C中复制出来一个副本
+    update_config(config, args)     #将args中的参数一一对应的写入配置文件中，最后冻结配置文件防止错误修改
 
     return config

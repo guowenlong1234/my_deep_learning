@@ -32,52 +32,72 @@ try:
 except ImportError:
     amp = None
 
+'''
+--cfg configs/swin_tiny_patch4_window7_224.yaml
+--data-path imagenet
+--local_rank 0
+--model name: swin_base_patch4_window7_224
+--local_rank 0
+--batch-size 16
+'''
 
-def parse_option():
+def parse_option():     #设置允许接受的命令行参数
+    #实例化一个命令行解析器对象，程序描述，add_help=False不允许自动添加帮助信息
     parser = argparse.ArgumentParser('Swin Transformer training and evaluation script', add_help=False)
+    #指定配置文件路径，必须的添加的
     parser.add_argument('--cfg', type=str, required=True, metavar="FILE", help='path to config file', )
-    parser.add_argument(
-        "--opts",
-        help="Modify config options by adding 'KEY VALUE' pairs. ",
-        default=None,
-        nargs='+',
-    )
+    #指定是否使用opt来添加键值对，默认为None，nargs='+'表示可以跟一个或者多个值，+表示至少需要一个值，传递的值将被解析为一个列表
+    parser.add_argument("--opts",help="Modify config options by adding 'KEY VALUE' pairs. ",default=None,nargs='+',)
 
     # easy config modification
+    #设置batch_size
     parser.add_argument('--batch-size', type=int, help="batch size for single GPU")
+    #设置数据集路径
     parser.add_argument('--data-path', type=str, help='path to dataset')
+    #指定是否使用了压缩文件zip
     parser.add_argument('--zip', action='store_true', help='use zipped dataset instead of folder dataset')
+    #指定数据集如何缓存。默认part: 将数据集分割成不重叠的部分，仅缓存其中一部分。
     parser.add_argument('--cache-mode', type=str, default='part', choices=['no', 'full', 'part'],
                         help='no: no cache, '
                              'full: cache all data, '
                              'part: sharding the dataset into nonoverlapping pieces and only cache one piece')
+    #从一个特定文件初恢复训练
     parser.add_argument('--resume', help='resume from checkpoint')
+    #累计多少步更新一次权重
     parser.add_argument('--accumulation-steps', type=int, help="gradient accumulation steps")
+    #是否使用梯度检查点，布尔类型
     parser.add_argument('--use-checkpoint', action='store_true',
                         help="whether to use gradient checkpointing to save memory")
+    #混合精度训练的优化级别
     parser.add_argument('--amp-opt-level', type=str, default='O1', choices=['O0', 'O1', 'O2'],
                         help='mixed precision opt level, if O0, no amp is used')
+    #指定输出文件的根目录
     parser.add_argument('--output', default='output', type=str, metavar='PATH',
                         help='root of output folder, the full path is <output>/<model_name>/<tag> (default: output)')
+    #标记实验的标签
     parser.add_argument('--tag', help='tag of experiment')
+    #只执行评估，不执行训练
     parser.add_argument('--eval', action='store_true', help='Perform evaluation only')
+    #只进行吞吐量测试
     parser.add_argument('--throughput', action='store_true', help='Test throughput only')
 
     # distributed training
+    #用于分布式训练时的本地进程编号
     parser.add_argument("--local_rank", type=int, required=True, help='local rank for DistributedDataParallel')
-
+    #解析命令行参数，将未定义的参数返回一个列表
     args, unparsed = parser.parse_known_args()
 
-    config = get_config(args)
+    config = get_config(args)   #将aegs中的参数全部装入congfig对象中，并且config文件锁定冻结，防止后续运行中被修改
 
     return args, config
 
 
 def main(config):
-    dataset_train, dataset_val, data_loader_train, data_loader_val, mixup_fn = build_loader(config)
+    #调用build_loader函数，生成训练数据和验证数据的dataset与data_loader
+    dataset_train, dataset_val, data_loader_train, data_loader_val, mixup_fn = build_loader(config)#mixup_fn是一种数据增强策略
 
     logger.info(f"Creating model:{config.MODEL.TYPE}/{config.MODEL.NAME}")
-    model = build_model(config)
+    model = build_model(config)     #实例化一个模型
     model.cuda()
     logger.info(str(model))
 
@@ -301,45 +321,49 @@ def throughput(data_loader, model, logger):
 
 
 if __name__ == '__main__':
-    _, config = parse_option()
+    _, config = parse_option()      #加载命令行参数，返回参数args, config，config中已经加载有args中的全部参数，且已经被冻结防止修改
     """
     if config.AMP_OPT_LEVEL != "O0":
         assert amp is not None, "amp not installed!"
     """
-    if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
-        rank = int(os.environ["RANK"])
-        world_size = int(os.environ['WORLD_SIZE'])
-        print(f"RANK and WORLD_SIZE in environ: {rank}/{world_size}")
-    else:
-        rank = -1
+    # 用于整理多机多卡进程os.environ访问环境变量，Rank是当前进程的标号，WORLD_SIZE是总进程数和节点数
+    if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:     #如果存在这两个值，说明有多机多线程训练
+        rank = int(os.environ["RANK"])          #提取rank，转化为int
+        world_size = int(os.environ['WORLD_SIZE'])  #提取WORLD_SIZE，转化为int
+        print(f"RANK and WORLD_SIZE in environ: {rank}/{world_size}")   #输出当前进程排名和总进程数
+    else:       #不存在这两个值，说明是单机单卡训练
+        rank = -1   #将这两个值设置为-1，表示只有主进程一个进程
         world_size = -1
-    torch.cuda.set_device(config.LOCAL_RANK)
+    torch.cuda.set_device(config.LOCAL_RANK)    #设置每个进程使用哪个设备
     #torch.distributed.init_process_group(backend='nccl', init_method='env://', world_size=world_size, rank=rank)
     #torch.distributed.barrier()
 
-    seed = config.SEED #+ dist.get_rank()
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    cudnn.benchmark = True
+    seed = config.SEED #获取随机初始化的种子，保证每次实验随机初始化的值是相同的#+ dist.get_rank()
+    torch.manual_seed(seed) #设置pythoch种子
+    np.random.seed(seed)    #设置numpy种子
+    cudnn.benchmark = True  #一种优化算法，在输入尺寸固定的情况下可以优化卷积计算性能，当尺寸不固定时，不要用
 
     # linear scale the learning rate according to total batch size, may not be optimal
-    linear_scaled_lr = config.TRAIN.BASE_LR * config.DATA.BATCH_SIZE #* dist.get_world_size() / 512.0
-    linear_scaled_warmup_lr = config.TRAIN.WARMUP_LR * config.DATA.BATCH_SIZE #* dist.get_world_size() / 512.0
-    linear_scaled_min_lr = config.TRAIN.MIN_LR * config.DATA.BATCH_SIZE #* dist.get_world_size() / 512.0
+    #根据总批次大小线性调整学习率，可能不是最优解
+    linear_scaled_lr = config.TRAIN.BASE_LR * config.DATA.BATCH_SIZE #catch*基础lr作为总lr。      * dist.get_world_size() / 512.0
+    linear_scaled_warmup_lr = config.TRAIN.WARMUP_LR * config.DATA.BATCH_SIZE #设置启动步数       * dist.get_world_size() / 512.0
+    linear_scaled_min_lr = config.TRAIN.MIN_LR * config.DATA.BATCH_SIZE #根据patch设置最小lr      * dist.get_world_size() / 512.0
     # gradient accumulation also need to scale the learning rate
-    if config.TRAIN.ACCUMULATION_STEPS > 1:
-        linear_scaled_lr = linear_scaled_lr * config.TRAIN.ACCUMULATION_STEPS
+    #根据梯度累计更新学习率
+    if config.TRAIN.ACCUMULATION_STEPS > 1:#如果设置了梯度累计
+        linear_scaled_lr = linear_scaled_lr * config.TRAIN.ACCUMULATION_STEPS       #基础学习率、启动步数、最小学习率均根据累计步数进行扩大
         linear_scaled_warmup_lr = linear_scaled_warmup_lr * config.TRAIN.ACCUMULATION_STEPS
         linear_scaled_min_lr = linear_scaled_min_lr * config.TRAIN.ACCUMULATION_STEPS
-    config.defrost()
-    config.TRAIN.BASE_LR = linear_scaled_lr
+    config.defrost()    #配置文件解冻
+    config.TRAIN.BASE_LR = linear_scaled_lr     #将学习率相关的三个参数写入配置文件中
     config.TRAIN.WARMUP_LR = linear_scaled_warmup_lr
     config.TRAIN.MIN_LR = linear_scaled_min_lr
-    config.freeze()
+    config.freeze() #重新冻结配置文件
 
     os.makedirs(config.OUTPUT, exist_ok=True)
     #logger = create_logger(output_dir=config.OUTPUT, dist_rank=dist.get_rank(), name=f"{config.MODEL.NAME}")
     logger = create_logger(output_dir=config.OUTPUT, name=f"{config.MODEL.NAME}")
+    #创建一个日志记录器，保存日志操作
     """
     if dist.get_rank() == 0:
         path = os.path.join(config.OUTPUT, "config.json")
@@ -350,4 +374,5 @@ if __name__ == '__main__':
     # print config
     logger.info(config.dump())
     """
-    main(config)
+    main(config)    #传入配置文件，调用主函数
+

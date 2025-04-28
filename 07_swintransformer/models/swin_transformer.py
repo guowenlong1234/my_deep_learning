@@ -11,15 +11,15 @@ import torch.utils.checkpoint as checkpoint
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 
 
-class Mlp(nn.Module):
+class Mlp(nn.Module):#初始化传入参数中act_layer= nn.GELU
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
         super().__init__()
-        out_features = out_features or in_features
-        hidden_features = hidden_features or in_features
-        self.fc1 = nn.Linear(in_features, hidden_features)
-        self.act = act_layer()
-        self.fc2 = nn.Linear(hidden_features, out_features)
-        self.drop = nn.Dropout(drop)
+        out_features = out_features or in_features          #默认输出维度=输入维度
+        hidden_features = hidden_features or in_features    #隐藏层取大的
+        self.fc1 = nn.Linear(in_features, hidden_features)  #定义全连接层1
+        self.act = act_layer()                              #定义激活函数，采用gelu
+        self.fc2 = nn.Linear(hidden_features, out_features) #定义全连接层
+        self.drop = nn.Dropout(drop)                        #定义dropout层
 
     def forward(self, x):
         x = self.fc1(x)
@@ -39,11 +39,11 @@ def window_partition(x, window_size):
     Returns:
         windows: (num_windows*B, window_size, window_size, C)
     """
-    B, H, W, C = x.shape
+    B, H, W, C = x.shape    #x值得是构造好的区域模板
     x = x.view(B, H // window_size, window_size, W // window_size, window_size, C)
-    print(x.shape)
+    #将x变成窗口的大小
     windows = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(-1, window_size, window_size, C) # window的数量 H/7 * W/7 *batch
-    print(windows.shape)
+    print(windows.shape)        #x的维度变成（67，7，7，1），表示(windows,patch_h,patch_w,1)
     return windows
 
 
@@ -66,7 +66,7 @@ def window_reverse(windows, window_size, H, W):
     return x
 
 
-class WindowAttention(nn.Module):
+class WindowAttention(nn.Module):#窗口内部注意力机制计算类
     r""" Window based multi-head self attention (W-MSA) module with relative position bias.
     It supports both of shifted and non-shifted window.
 
@@ -86,33 +86,55 @@ class WindowAttention(nn.Module):
         self.dim = dim
         self.window_size = window_size  # Wh, Ww
         self.num_heads = num_heads
-        head_dim = dim // num_heads
-        self.scale = qk_scale or head_dim ** -0.5
+        head_dim = dim // num_heads #计算每个头的维度
+        self.scale = qk_scale or head_dim ** -0.5   #定义缩放维度，如果没有定义缩放维度，则使用根号下头维度
 
         # define a parameter table of relative position bias
+
+        '''
+        定义一个可学习的相对位置偏差参数表，一个初始化全0的[2*Wh-1 * 2*Ww-1, nH]张量
+        在第一个stage中，这是一个[13*13,3]维度的张量，第一个维度记录了每一对位置的相对位置关系，第二个维度记录了不同头之间的相对位置
+        在这个表里，可以查询到任意一个窗口与其他任意一个窗口的位置关系
+        '''
         self.relative_position_bias_table = nn.Parameter(
             torch.zeros((2 * window_size[0] - 1) * (2 * window_size[1] - 1), num_heads))  # 2*Wh-1 * 2*Ww-1, nH
 
         # get pair-wise relative position index for each token inside the window
-        coords_h = torch.arange(self.window_size[0])
-        coords_w = torch.arange(self.window_size[1])
+        #获取窗口内每个标记的成对相对位置索引
+        coords_h = torch.arange(self.window_size[0])    #生成窗口的行索引
+        coords_w = torch.arange(self.window_size[1])    #生成窗口的列索引
+        #torch.meshgrid([coords_h, coords_w])生成二维坐标网格
+        #torch.stack是用于沿着新的维度（默认是第一维）将多个张量合并在一起。
         coords = torch.stack(torch.meshgrid([coords_h, coords_w]))  # 2, Wh, Ww
+
+        #将张量展平[2, w, h] ->[2， w*h]
         coords_flatten = torch.flatten(coords, 1)  # 2, Wh*Ww
+
+        '''
+        coords_flatten[:, :, None]再第三维添加一个维度，结果是一个形状为 (2, H * W, 1) 的张量。
+        coords_flatten[:, None, :]再第二维度加上一个维度，得到一个形状为 (2, 1, H * W) 的张量
+        coords_flatten[:, :, None] - coords_flatten[:, None, :] 会对这两个张量进行广播（broadcasting），从而计算每一对坐标之间的差值。
+        结果就是计算了每对坐标之间的差值，得到一个形状为 (2, H * W, H * W) 的张量，表示每个坐标对之间的相对位置关系。
+        '''
+
         relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]  # 2, Wh*Ww, Wh*Ww
+        #调整矩阵形状并且使其再内存中连续Wh*Ww, Wh*Ww, 2
         relative_coords = relative_coords.permute(1, 2, 0).contiguous()  # Wh*Ww, Wh*Ww, 2
+
+        #
         relative_coords[:, :, 0] += self.window_size[0] - 1  # shift to start from 0
         relative_coords[:, :, 1] += self.window_size[1] - 1
         relative_coords[:, :, 0] *= 2 * self.window_size[1] - 1
         relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
-        self.register_buffer("relative_position_index", relative_position_index)
+        self.register_buffer("relative_position_index", relative_position_index)#register_buffer注册一个张量用来保存信息，这个张良是不能被学习的，不会更新
 
-        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
-        self.attn_drop = nn.Dropout(attn_drop)
-        self.proj = nn.Linear(dim, dim)
-        self.proj_drop = nn.Dropout(proj_drop)
+        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)   #初始化一个kqv矩阵，用来计算kqv矩阵
+        self.attn_drop = nn.Dropout(attn_drop)  #初始化dropout率
+        self.proj = nn.Linear(dim, dim)     #初始化一个全连接层
+        self.proj_drop = nn.Dropout(proj_drop)  #初始化全连接层dropout
 
-        trunc_normal_(self.relative_position_bias_table, std=.02)
-        self.softmax = nn.Softmax(dim=-1)
+        trunc_normal_(self.relative_position_bias_table, std=.02)#对相对位置编码表进行截断正态分布，使其标准差为0.02
+        self.softmax = nn.Softmax(dim=-1)#初始化一个softmax层，表示沿着最后一个维度进行softmax操作
 
     def forward(self, x, mask=None):
         """
@@ -184,7 +206,7 @@ class SwinTransformerBlock(nn.Module):
         window_size (int): Window size.
         shift_size (int): Shift size for SW-MSA.
         mlp_ratio (float): Ratio of mlp hidden dim to embedding dim.
-        qkv_bias (bool, optional): If True, add a learnable bias to query, key, value. Default: True
+        qkv_bias (bool, optional): If True, add a learnable bias to query, key, value. Default:  True
         qk_scale (float | None, optional): Override default qk scale of head_dim ** -0.5 if set.
         drop (float, optional): Dropout rate. Default: 0.0
         attn_drop (float, optional): Attention dropout rate. Default: 0.0
@@ -203,46 +225,59 @@ class SwinTransformerBlock(nn.Module):
         self.window_size = window_size
         self.shift_size = shift_size
         self.mlp_ratio = mlp_ratio
+        #如果patch数量小于窗口尺寸，就不需要再准备窗口
         if min(self.input_resolution) <= self.window_size:
             # if window size is larger than input resolution, we don't partition windows
             self.shift_size = 0
-            self.window_size = min(self.input_resolution)
+            self.window_size = min(self.input_resolution)#窗口尺寸直接设置为最小的pacth数量即可
+        '''
+        这行代码是一个 断言语句，用来确保某个条件在程序运行时是成立的。如果条件不成立，程序会抛出一个 AssertionError 异常，提示开发者进行修正
+        要求移动尺寸必须在0和窗口尺寸之间，如果不成立，就需要抛出异常
+        '''
         assert 0 <= self.shift_size < self.window_size, "shift_size must in 0-window_size"
 
-        self.norm1 = norm_layer(dim)
-        self.attn = WindowAttention(
+        self.norm1 = norm_layer(dim)    #归一化层，输入参数为维度大小
+        self.attn = WindowAttention(    #完成初始化kqv以及相对位置矩阵，是模型中的msa层
             dim, window_size=to_2tuple(self.window_size), num_heads=num_heads,
             qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop)
-
+        #根据drop_path参数的值判断是否采用DropPath技术，否则不采用dropout
+        '''
+        DropPath的基本原理是：在每次前向传播时，随机“丢弃”一些层的输出，以此来防止过拟合并提高模型的泛化能力。不同于传统的 Dropout 操作，DropPath 会直接跳过某一层的计算并返回其输入
+        nn.Identity() 是一个 PyTorch 的内置层，它的作用是不做任何变换，直接返回输入。
+        '''
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
-        self.norm2 = norm_layer(dim)
+        self.norm2 = norm_layer(dim)    #归一化层，输入参数为维度大小
+        #计算mlp层特征项向量维度
         mlp_hidden_dim = int(dim * mlp_ratio)
+        #实例化MLP层
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
 
-        if self.shift_size > 0:
-            # calculate attention mask for SW-MSA
-            H, W = self.input_resolution
+        if self.shift_size > 0:#如果有窗口滑动的话
+            # calculate attention mask for SW-MSA执行下列操作计算注意力遮罩
+            H, W = self.input_resolution  #每一行patch数量和每一列patch数量
             img_mask = torch.zeros((1, H, W, 1))  # 1 H W 1
-            h_slices = (slice(0, -self.window_size),
-                        slice(-self.window_size, -self.shift_size),
-                        slice(-self.shift_size, None))
-            w_slices = (slice(0, -self.window_size),
+            h_slices = (slice(0, -self.window_size),    #对于行切片，从0到倒数第七个取出张量的头
+                        slice(-self.window_size, -self.shift_size),     #从倒数第7个到倒数第三个取出张量的中间部分
+                        slice(-self.shift_size, None))                  #从倒数第三个到最后取出张量的最后部分
+            w_slices = (slice(0, -self.window_size),    #对列切片同样定义
                         slice(-self.window_size, -self.shift_size),
                         slice(-self.shift_size, None))
             cnt = 0
+            #经过这三行代码，为一个56*56的矩阵的每一个格子都赋予了一定的值，每种区域内部填充的数字相同为0-8，具体见56*56矩阵表格
             for h in h_slices:
                 for w in w_slices:
                     img_mask[:, h, w, :] = cnt
                     cnt += 1
-
+            #mask_windowsx的维度变成（67，7，7，1），表示(windows, patch_h, patch_w, 1)
             mask_windows = window_partition(img_mask, self.window_size)  # nW, window_size, window_size, 1
+            #将mask_windows维度变成(67，49）：(windows,patch)
             mask_windows = mask_windows.view(-1, self.window_size * self.window_size)
             attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
             attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0)).masked_fill(attn_mask == 0, float(0.0))
-        else:
+        else:#如果没有窗口滑动操作的话，不设置遮罩
             attn_mask = None
-
-        self.register_buffer("attn_mask", attn_mask)
+        #在模型中嵌入一个张量，但是不更新。名称为注意力遮罩
+        self.register_buffer("attn_mask", attn_mask)    #完成了一个进本的block操作
 
     def forward(self, x):
         H, W = self.input_resolution
@@ -358,20 +393,20 @@ class BasicLayer(nn.Module):
     """ A basic Swin Transformer layer for one stage.
 
     Args:
-        dim (int): Number of input channels.
-        input_resolution (tuple[int]): Input resolution.
-        depth (int): Number of blocks.
-        num_heads (int): Number of attention heads.
-        window_size (int): Local window size.
-        mlp_ratio (float): Ratio of mlp hidden dim to embedding dim.
-        qkv_bias (bool, optional): If True, add a learnable bias to query, key, value. Default: True
-        qk_scale (float | None, optional): Override default qk scale of head_dim ** -0.5 if set.
+        dim (int): Number of input channels. 输入图像尺寸
+        input_resolution (tuple[int]): Input resolution. 两个维度上输入patch数量
+        depth (int): Number of blocks.  该stage有多少个block
+        num_heads (int): Number of attention heads. 头数
+        window_size (int): Local window size.   窗口尺寸
+        mlp_ratio (float): Ratio of mlp hidden dim to embedding dim.    #mlp层维度
+        qkv_bias (bool, optional): If True, add a learnable bias to query, key, value. Default: True    qkv偏置
+        qk_scale (float | None, optional): Override default qk scale of head_dim ** -0.5 if set.    qk缩放比例
         drop (float, optional): Dropout rate. Default: 0.0
         attn_drop (float, optional): Attention dropout rate. Default: 0.0
         drop_path (float | tuple[float], optional): Stochastic depth rate. Default: 0.0
-        norm_layer (nn.Module, optional): Normalization layer. Default: nn.LayerNorm
-        downsample (nn.Module | None, optional): Downsample layer at the end of the layer. Default: None
-        use_checkpoint (bool): Whether to use checkpointing to save memory. Default: False.
+        norm_layer (nn.Module, optional): Normalization layer. Default: nn.LayerNorm    归一化策略
+        downsample (nn.Module | None, optional): Downsample layer at the end of the layer. Default: None    是否下采样
+        use_checkpoint (bool): Whether to use checkpointing to save memory. Default: False. 是否使用检查点
     """
 
     def __init__(self, dim, input_resolution, depth, num_heads, window_size,
@@ -379,22 +414,22 @@ class BasicLayer(nn.Module):
                  drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False):
 
         super().__init__()
-        self.dim = dim
-        self.input_resolution = input_resolution
-        self.depth = depth
+        self.dim = dim      #特征维度
+        self.input_resolution = input_resolution    #两个维度上的patch数量
+        self.depth = depth  #该stage有多少个block
         self.use_checkpoint = use_checkpoint
 
-        # build blocks
-        self.blocks = nn.ModuleList([
+        # build blocks构造block
+        self.blocks = nn.ModuleList([ #完成了1个block的初始化，通过shift_size参数判断是否为sw-msa/w-msa
             SwinTransformerBlock(dim=dim, input_resolution=input_resolution,
                                  num_heads=num_heads, window_size=window_size,
-                                 shift_size=0 if (i % 2 == 0) else window_size // 2,
+                                 shift_size=0 if (i % 2 == 0) else window_size // 2,    #单数block则shift_size=0，双数block则window_size // 2向下取整
                                  mlp_ratio=mlp_ratio,
                                  qkv_bias=qkv_bias, qk_scale=qk_scale,
                                  drop=drop, attn_drop=attn_drop,
                                  drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
                                  norm_layer=norm_layer)
-            for i in range(depth)])
+            for i in range(depth)]) #重复构造depth个block
 
         # patch merging layer
         if downsample is not None:
@@ -437,20 +472,20 @@ class PatchEmbed(nn.Module):
 
     def __init__(self, img_size=224, patch_size=4, in_chans=3, embed_dim=96, norm_layer=None):
         super().__init__()
-        img_size = to_2tuple(img_size)
-        patch_size = to_2tuple(patch_size)
-        patches_resolution = [img_size[0] // patch_size[0], img_size[1] // patch_size[1]]
+        img_size = to_2tuple(img_size)          #将image_size转化为一个元组(224, 224)
+        patch_size = to_2tuple(patch_size)      #将patch size转化为一个元组(4, 4)
+        patches_resolution = [img_size[0] // patch_size[0], img_size[1] // patch_size[1]]#计算一张图片在两个维度上分别能切出来多少个patch
         self.img_size = img_size
         self.patch_size = patch_size
         self.patches_resolution = patches_resolution
-        self.num_patches = patches_resolution[0] * patches_resolution[1]
+        self.num_patches = patches_resolution[0] * patches_resolution[1]        #计算patch数量
 
-        self.in_chans = in_chans
-        self.embed_dim = embed_dim
-
+        self.in_chans = in_chans    #图片通道数
+        self.embed_dim = embed_dim  #特征向量维度
+        #一个卷积层，输入通道数，输出特征向量维度，卷积核尺寸为patch_size，每次移动一个小patch
         self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
-        if norm_layer is not None:
-            self.norm = norm_layer(embed_dim)
+        if norm_layer is not None:      #如果有embedding归一化层
+            self.norm = norm_layer(embed_dim)   #设置一个归一化层
         else:
             self.norm = None
 
@@ -480,24 +515,24 @@ class SwinTransformer(nn.Module):
           https://arxiv.org/pdf/2103.14030
 
     Args:
-        img_size (int | tuple(int)): Input image size. Default 224
+        img_size (int | tuple(int)): Input image size. Default 224 输入图像大小，默认224
         patch_size (int | tuple(int)): Patch size. Default: 4
         in_chans (int): Number of input image channels. Default: 3
-        num_classes (int): Number of classes for classification head. Default: 1000
-        embed_dim (int): Patch embedding dimension. Default: 96
-        depths (tuple(int)): Depth of each Swin Transformer layer.
-        num_heads (tuple(int)): Number of attention heads in different layers.
-        window_size (int): Window size. Default: 7
-        mlp_ratio (float): Ratio of mlp hidden dim to embedding dim. Default: 4
-        qkv_bias (bool): If True, add a learnable bias to query, key, value. Default: True
-        qk_scale (float): Override default qk scale of head_dim ** -0.5 if set. Default: None
-        drop_rate (float): Dropout rate. Default: 0
+        num_classes (int): Number of classes for classification head. Default: 1000 分类数量默认1000
+        embed_dim (int): Patch embedding dimension. Default: 96 Patch embedding 向量特征维度
+        depths (tuple(int)): Depth of each Swin Transformer layer. 规定了每一层的block数量
+        num_heads (tuple(int)): Number of attention heads in different layers.  每一层的头数
+        window_size (int): Window size. Default: 7  窗口大小，默认7
+        mlp_ratio (float): Ratio of mlp hidden dim to embedding dim. Default: 4 规定mlp层参数量是特征维度96的几倍
+        qkv_bias (bool): If True, add a learnable bias to query, key, value. Default: True 如果为 True，则为qkv添加可学习的偏置。默认值： 为 True
+        qk_scale (float): Override default qk scale of head_dim ** -0.5 if set. Default: None qk的缩放比例
+        drop_rate (float): Dropout rate. Default: 0 dropout的比例
         attn_drop_rate (float): Attention dropout rate. Default: 0
         drop_path_rate (float): Stochastic depth rate. Default: 0.1
-        norm_layer (nn.Module): Normalization layer. Default: nn.LayerNorm.
-        ape (bool): If True, add absolute position embedding to the patch embedding. Default: False
-        patch_norm (bool): If True, add normalization after patch embedding. Default: True
-        use_checkpoint (bool): Whether to use checkpointing to save memory. Default: False
+        norm_layer (nn.Module): Normalization layer. Default: nn.LayerNorm. 归一化方法
+        ape (bool): If True, add absolute position embedding to the patch embedding. Default: False 是否嵌入绝对位置编码
+        patch_norm (bool): If True, add normalization after patch embedding. Default: True 是否在embedding后添加归一化层
+        use_checkpoint (bool): Whether to use checkpointing to save memory. Default: False  是否使用chekpoint继续训练
     """
 
     def __init__(self, img_size=224, patch_size=4, in_chans=3, num_classes=1000,
@@ -508,48 +543,54 @@ class SwinTransformer(nn.Module):
                  use_checkpoint=False, **kwargs):
         super().__init__()
 
-        self.num_classes = num_classes
-        self.num_layers = len(depths)
-        self.embed_dim = embed_dim
-        self.ape = ape
-        self.patch_norm = patch_norm
-        self.num_features = int(embed_dim * 2 ** (self.num_layers - 1))
-        self.mlp_ratio = mlp_ratio
+        self.num_classes = num_classes  #分类数量
+        self.num_layers = len(depths)   #每一层有多少个block2，2，6，2
+        self.embed_dim = embed_dim      #特征向量维度
+        self.ape = ape                  #是否嵌入绝对位置编码 false
+        self.patch_norm = patch_norm    #在embedding后添加归一化层
+        self.num_features = int(embed_dim * 2 ** (self.num_layers - 1)) #最后一层的特征维度每一个stage使特征向量维度翻倍 96 * 2^3 = 96 * 8 = 768
+        self.mlp_ratio = mlp_ratio      #mlp层特征翻倍数
 
-        # split image into non-overlapping patches
+        # split image into non-overlapping patches，分割图像为不重合的patch
         self.patch_embed = PatchEmbed(
             img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim,
             norm_layer=norm_layer if self.patch_norm else None)
-        num_patches = self.patch_embed.num_patches
-        patches_resolution = self.patch_embed.patches_resolution
+        num_patches = self.patch_embed.num_patches      #计算总共patch数量3136
+        patches_resolution = self.patch_embed.patches_resolution    #在两个维度上分别能切出来多少个patch[56, 56]
         self.patches_resolution = patches_resolution
 
-        # absolute position embedding
+        # absolute position embedding 是否采用绝对位置编码
         if self.ape:
-            self.absolute_pos_embed = nn.Parameter(torch.zeros(1, num_patches, embed_dim))
-            trunc_normal_(self.absolute_pos_embed, std=.02)
+            self.absolute_pos_embed = nn.Parameter(torch.zeros(1, num_patches, embed_dim)) #构造一个全零的位置编码矩阵[1, 3136, 96]
+            trunc_normal_(self.absolute_pos_embed, std=.02)     #采用截断标准差初始化，使绝大多数值位于标准差0.02范围内，防止梯度爆炸
 
-        self.pos_drop = nn.Dropout(p=drop_rate)
+        self.pos_drop = nn.Dropout(p=drop_rate)     #设置dropout
 
-        # stochastic depth
+        # stochastic depth随即深度
+        #设置随机深度衰减规则
+        '''
+        torch.linspace(start, end, steps)：生成从 start 到 end 之间均匀分布的 steps 个值
+        x.item()：从每个张量 x 中提取单个数值并将其转化为 Python 基本数据类型（如 float）。
+        最后生成一个列表，包括一系列不同的drop_path_rate，越往后面层的dropout概率越高
+        '''
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]  # stochastic depth decay rule
 
         # build layers
-        self.layers = nn.ModuleList()
-        for i_layer in range(self.num_layers):
-            layer = BasicLayer(dim=int(embed_dim * 2 ** i_layer),
-                               input_resolution=(patches_resolution[0] // (2 ** i_layer),
+        self.layers = nn.ModuleList()       #构造一个模型容器，存储不同的层
+        for i_layer in range(self.num_layers):  #遍历每一个stage，为其中添加一个层
+            layer = BasicLayer(dim=int(embed_dim * 2 ** i_layer),   #当前stage的特征向量维度
+                               input_resolution=(patches_resolution[0] // (2 ** i_layer),       #在当前stage中，输入图像的尺寸
                                                  patches_resolution[1] // (2 ** i_layer)),
-                               depth=depths[i_layer],
-                               num_heads=num_heads[i_layer],
-                               window_size=window_size,
-                               mlp_ratio=self.mlp_ratio,
-                               qkv_bias=qkv_bias, qk_scale=qk_scale,
-                               drop=drop_rate, attn_drop=attn_drop_rate,
-                               drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
-                               norm_layer=norm_layer,
-                               downsample=PatchMerging if (i_layer < self.num_layers - 1) else None,
-                               use_checkpoint=use_checkpoint)
+                               depth=depths[i_layer],       #当前层的深度，包括多少个block
+                               num_heads=num_heads[i_layer],    #当前stage应该有的头数，越往下头数越多
+                               window_size=window_size,         #窗口尺寸
+                               mlp_ratio=self.mlp_ratio,        #mlp特征维度倍数
+                               qkv_bias=qkv_bias, qk_scale=qk_scale,    #是否设置kqv偏置，qk缩放比例
+                               drop=drop_rate, attn_drop=attn_drop_rate,    #dropout率
+                               drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],  #从数列里面去除一个数作为drop_path_rate
+                               norm_layer=norm_layer,   #是否进行归一化处理
+                               downsample=PatchMerging if (i_layer < self.num_layers - 1) else None,    #下采样策略，不是最后一层都要进行下采样
+                               use_checkpoint=use_checkpoint)   #是否使用梯度检查点
             self.layers.append(layer)
 
         self.norm = norm_layer(self.num_features)
