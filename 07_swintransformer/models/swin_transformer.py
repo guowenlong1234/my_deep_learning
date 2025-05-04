@@ -36,19 +36,23 @@ def window_partition(x, window_size):
         x: (B, H, W, C)
         window_size (int): window size
 
-    Returns:
+    Returns:函数的作用是划分窗口
         windows: (num_windows*B, window_size, window_size, C)
     """
-    B, H, W, C = x.shape    #x值得是构造好的区域模板
+    B, H, W, C = x.shape    #x值得是构造好的区域模板，已经经过了滑动之后
     x = x.view(B, H // window_size, window_size, W // window_size, window_size, C)
+    #[16, 56, 56, 96] -> [16, 8, 7, 8, 7, 96]
     #将x变成窗口的大小
+
+    #[16, 8, 7, 8, 7, 96] ->[16, 8, 8, 7, 7, 96] -> [1024, 7, 7, 96]
     windows = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(-1, window_size, window_size, C) # window的数量 H/7 * W/7 *batch
-    print(windows.shape)        #x的维度变成（67，7，7，1），表示(windows,patch_h,patch_w,1)
-    return windows
+
+    return windows      #返回值[1024, 7, 7, 96] = [batch*win_num_h*win_num_w, patch_size_w,patch_size_h,c]
 
 
 def window_reverse(windows, window_size, H, W):
     """
+    这个函数的作用是将矩阵从窗口形式转化为了patch形式，与window_partition互为反函数
     Args:
         windows: (num_windows*B, window_size, window_size, C)
         window_size (int): Window size
@@ -58,11 +62,15 @@ def window_reverse(windows, window_size, H, W):
     Returns:
         x: (B, H, W, C)
     """
+    #[1024, 7, 7, 96]
+    #b = batch = 16
     B = int(windows.shape[0] / (H * W / window_size / window_size))
+    #[1024, 7, 7, 96] -> [16, 8, 8 ,7, 7, 96]
     x = windows.view(B, H // window_size, W // window_size, window_size, window_size, -1)
-    print(x.shape)
+
+    #[16, 8, 8, 7, 7, 96] -> [16, 8, 7, 8, 7 ,96] -> [16, 56, 56, 96]
     x = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(B, H, W, -1)
-    print(x.shape)
+
     return x
 
 
@@ -141,42 +149,60 @@ class WindowAttention(nn.Module):#窗口内部注意力机制计算类
         Args:
             x: input features with shape of (num_windows*B, N, C)
             mask: (0/-inf) mask with shape of (num_windows, Wh*Ww, Wh*Ww) or None
-        """
+        """#传入参数[1024 ,49, 96]
         B_, N, C = x.shape
-        qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
-        print(qkv.shape)
-        q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
-        print(q.shape)
-        print(k.shape)
-        print(v.shape)
-        q = q * self.scale
-        attn = (q @ k.transpose(-2, -1))
-        print(attn.shape)
 
+        #[1024 ,49, 96] -> [1024, 49, 96*3] -> [1024, 49, 3, 3, 32] -> [3, 1024, 3, 49, 32] -> [kqv, win_num, head, patch_num, head_size]
+        qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        q, k, v = qkv[0], qkv[1], qkv[2]    #分别取出kqv矩阵，维度为[1024, 3, 49, 32] =  [win_num, head, patch_num, head_size] # make torchscript happy (cannot use tensor as tuple)
+
+        q = q * self.scale  #除以根号下特征维度，保证数据的统一性
+
+        #@表示矩阵点积，[1024, 3, 49, 32]·[1024, 3, 32, 49] -> [1024, 3, 49, 49],transpose(-2, -1)表示转置
+        attn = (q @ k.transpose(-2, -1))
+
+        '''
+        relative_position_bias_table是相对位置编码表[num_relative_positions, num_heads]，其中 num_relative_positions 是相对位置编码的数量，num_heads 是多头注意力的头数。
+        self.relative_position_index是相对位置索引矩阵，存储了相对位置对的索引，通过view方法展平为1维矩阵，
+        relative_position_index.view(-1) 展平后的索引值会依次去查找
+        relative_position_bias_table 中的偏置值，返回的是一个一维的向量。，返回的是每一个位置于其他所有位置的相对位置偏置
+        view() 操作将获取到的偏置重新形状化为二维矩阵。新的形状是 [window_size[0] * window_size[1], window_size[0] * window_size[1], -1]
+        最终结果为[49, 49, 3]，表示有49个位置，每个位置于其他49个位置都有一个相对位置偏置，共三头注意力机制
+        '''
         relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
             self.window_size[0] * self.window_size[1], self.window_size[0] * self.window_size[1], -1)  # Wh*Ww,Wh*Ww,nH
-        print(relative_position_bias.shape)
+
+
+
+        #[49, 49, 3] -> [3, 49, 49]
         relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
-        print(relative_position_bias.shape)
+
+        #将注意力得分加上相对位置偏置
+        #[1024, 3, 49, 49] + [3, 49, 49]利用矩阵广播机制相加 -> [1024, 3, 49, 49]
         attn = attn + relative_position_bias.unsqueeze(0)
-        print(attn.shape)
 
-        if mask is not None:
+
+        if mask is not None:    #判断是否需要mask，如果有窗口滑动，则需要mask遮罩
             nW = mask.shape[0]
-            attn = attn.view(B_ // nW, nW, self.num_heads, N, N) + mask.unsqueeze(1).unsqueeze(0)
-            attn = attn.view(-1, self.num_heads, N, N)
-            attn = self.softmax(attn)
-        else:
+            attn = attn.view(B_ // nW, nW, self.num_heads, N, N) + mask.unsqueeze(1).unsqueeze(0)   #[1024, 3, 49, 49] -> [16, 64, 3, 49, 49]，再加上mask将不需要的地方的值变得非常小，对mask插入维度，进行广播运算
+            attn = attn.view(-1, self.num_heads, N, N)#[16, 64, 3, 49, 49] -> [1024, 3, 49, 49]
+            attn = self.softmax(attn)   #经过softmax，将mask的位置的值都变成0
+        else:       #不需要的，直接进行softmax
             attn = self.softmax(attn)
 
-        attn = self.attn_drop(attn)
-        print(attn.shape)
+        attn = self.attn_drop(attn)     #进行dropout
+
+
+        #[1024, 3, 49, 49] · [1024, 3, 49, 32] = [1024, 3, 49, 32] -> [1024, 49, 3, 32] -> [1024, 49, 96]
         x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
-        print(x.shape)
+
+
+        #进行全连接层
         x = self.proj(x)
-        print(x.shape)
+
+        #进行dropou
         x = self.proj_drop(x)
-        print(x.shape)
+
         return x
 
     def extra_repr(self) -> str:
@@ -279,46 +305,51 @@ class SwinTransformerBlock(nn.Module):
         #在模型中嵌入一个张量，但是不更新。名称为注意力遮罩
         self.register_buffer("attn_mask", attn_mask)    #完成了一个进本的block操作
 
-    def forward(self, x):
-        H, W = self.input_resolution
-        B, L, C = x.shape
-        assert L == H * W, "input feature has wrong size"
+    def forward(self, x):   #[16,3136,96]
+        H, W = self.input_resolution        #取出每一行每一列的patch数量，首轮为56
+        B, L, C = x.shape   #取出x的形状维度，
+        assert L == H * W, "input feature has wrong size"   #判断维度是否出错
 
-        shortcut = x
-        x = self.norm1(x)
-        x = x.view(B, H, W, C)
-
+        shortcut = x    #保存一次x
+        x = self.norm1(x)       #进行LN层，维度不变
+        x = x.view(B, H, W, C)  #[16,3136,96]->[16,56,56,96]
         # cyclic shift
-        if self.shift_size > 0:
-            shifted_x = torch.roll(x, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
+        if self.shift_size > 0: #判断是否需要窗口滑动
+            #如果需要shift_siza,就在长和宽两个维度上进行循环位移，得到新的经过移动之后的数据
+            shifted_x = torch.roll(x, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2)) #如果需要窗口滑动
         else:
-            shifted_x = x
+            shifted_x = x       #不需要窗口滑动，x的值不变，赋给shifted_x 保证了下面代码的一致性
 
-        # partition windows
-        x_windows = window_partition(shifted_x, self.window_size)  # nW*B, window_size, window_size, C
+        # partition windows 划分窗口,#返回值[1024, 7, 7, 96] = [batch*win_num_h*win_num_w, patch_size_w,patch_size_h,c]
+        x_windows = window_partition(shifted_x, self.window_size)  # 函数的作用是将x划分为窗口，返回值[1024, 7, 7, 96] = [batch*win_num_h*win_num_w, patch_size_w,patch_size_h,c]nW*B, window_size, window_size, C
+
+        #[1024, 7, 7, 96] -> [1024 ,49, 96]
         x_windows = x_windows.view(-1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
 
-        # W-MSA/SW-MSA
+        # W-MSA/SW-MSA输入为[1024, 49, 96] ->[1024, 49, 96],加入了多头注意力、相对位置编码等机制，如果需要窗口滑动，则将窗口滑动机制也加入进去
         attn_windows = self.attn(x_windows, mask=self.attn_mask)  # nW*B, window_size*window_size, C
 
-        # merge windows
+        # merge windows[1024, 49, 96] -> [1024, 7, 7, 96]
         attn_windows = attn_windows.view(-1, self.window_size, self.window_size, C)
+
+        #将数据矩阵从窗口形式重新变成patch形式[1024, 7, 7, 96] -> [16, 56, 56, 96]
         shifted_x = window_reverse(attn_windows, self.window_size, H, W)  # B H' W' C
 
         # reverse cyclic shift
-        if self.shift_size > 0:
+        if self.shift_size > 0: #如果需要进行窗口滑动操作，再将之前滑动的反过来，使图像回复原本样子
             x = torch.roll(shifted_x, shifts=(self.shift_size, self.shift_size), dims=(1, 2))
-            print(x.shape)
-        else:
-            x = shifted_x
-        x = x.view(B, H * W, C)
-        print(x.shape)
 
-        # FFN
+        else:   #不需要进行窗口滑动操作
+            x = shifted_x #x直接等于shifted_x
+
+        #[16, 56, 56, 96] -> [16, 3136, 96]
+        x = x.view(B, H * W, C)
+        # FFN   进行残差链接，如果有需要采用drop_path
         x = shortcut + self.drop_path(x)
-        print(x.shape)
+
+        #进行mlp链接
         x = x + self.drop_path(self.mlp(self.norm2(x)))
-        print(x.shape)
+
         return x
 
     def extra_repr(self) -> str:
@@ -351,10 +382,10 @@ class PatchMerging(nn.Module):
 
     def __init__(self, input_resolution, dim, norm_layer=nn.LayerNorm):
         super().__init__()
-        self.input_resolution = input_resolution
-        self.dim = dim
-        self.reduction = nn.Linear(4 * dim, 2 * dim, bias=False)
-        self.norm = norm_layer(4 * dim)
+        self.input_resolution = input_resolution        #记录输入patch的数量
+        self.dim = dim      #记录特征向量维度数量
+        self.reduction = nn.Linear(4 * dim, 2 * dim, bias=False)    #全连接层，输入384，输出192，压缩维度
+        self.norm = norm_layer(4 * dim) #在396维度上进行LN
 
     def forward(self, x):
         """
@@ -362,20 +393,20 @@ class PatchMerging(nn.Module):
         """
         H, W = self.input_resolution
         B, L, C = x.shape
-        assert L == H * W, "input feature has wrong size"
-        assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
+        assert L == H * W, "input feature has wrong size"       #判断输入是否合法，不合法抛出异常
+        assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even." #判断输出是否合法，不合法抛出异常
 
-        x = x.view(B, H, W, C)
+        x = x.view(B, H, W, C)  #[16, 3136, 96] -> [16, 56, 56, 96]
 
-        x0 = x[:, 0::2, 0::2, :]  # B H/2 W/2 C
+        x0 = x[:, 0::2, 0::2, :]  # B H/2 W/2 C #对x进行下采样，在横竖两个维度隔一个采样一个
         x1 = x[:, 1::2, 0::2, :]  # B H/2 W/2 C
         x2 = x[:, 0::2, 1::2, :]  # B H/2 W/2 C
         x3 = x[:, 1::2, 1::2, :]  # B H/2 W/2 C
-        x = torch.cat([x0, x1, x2, x3], -1)  # B H/2 W/2 4*C
-        x = x.view(B, -1, 4 * C)  # B H/2*W/2 4*C
+        x = torch.cat([x0, x1, x2, x3], -1)  # B H/2 W/2 4*C [16, 56, 56, 96] -> [16, 28, 28, 384]
+        x = x.view(B, -1, 4 * C)  # B H/2*W/2 4*C   #[16, 28, 28, 384]->[16, 784, 384],将四个下采样结果展平
 
-        x = self.norm(x)
-        x = self.reduction(x)
+        x = self.norm(x)        #针对384维度进行LN归一化处理
+        x = self.reduction(x)   #将384维度变成192，通过一个全连接层进行转化 [16, 784, 384] -> [16, 784, 192]
 
         return x
 
@@ -432,20 +463,21 @@ class BasicLayer(nn.Module):
             for i in range(depth)]) #重复构造depth个block
 
         # patch merging layer
+        #判断是否需要patch merging，如果需要，执行downsample下采样
         if downsample is not None:
             self.downsample = downsample(input_resolution, dim=dim, norm_layer=norm_layer)
         else:
             self.downsample = None
 
     def forward(self, x):
-        for blk in self.blocks:
-            if self.use_checkpoint:
+        for blk in self.blocks:     #
+            if self.use_checkpoint: #判断是否采用了检查点继续
                 x = checkpoint.checkpoint(blk, x)
-            else:
-                x = blk(x)
+            else:   #没有采用检查点继续
+                x = blk(x)  #再第一个stage中，完成了两个block，分别为一个wsma和一个swmsa
         if self.downsample is not None:
-            x = self.downsample(x)
-        return x
+            x = self.downsample(x)  #[16, 3136, 96] -> [16, 784, 192]
+        return x    #这个函数完成了两个block的运算，并且进行了下采样操作，将特征维度翻倍，窗口数量减小四倍，[16, 784, 192]
 
     def extra_repr(self) -> str:
         return f"dim={self.dim}, input_resolution={self.input_resolution}, depth={self.depth}"
@@ -490,15 +522,18 @@ class PatchEmbed(nn.Module):
             self.norm = None
 
     def forward(self, x):
-        B, C, H, W = x.shape
+        B, C, H, W = x.shape    #x[16, 3, 224, 224]，取出各个维度的数值
         # FIXME look at relaxing size constraints
+        #判断输入是否合法，如果不合法则抛出异常信息
         assert H == self.img_size[0] and W == self.img_size[1], \
             f"Input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})."
-        x = self.proj(x).flatten(2).transpose(1, 2)  # B Ph*Pw C
-        print(x.shape) #4 3136 96 其中3136就是 224/4 * 224/4 相当于有这么长的序列，其中每个元素是96维向量
+
+        # [16, 3, 224, 224]->[16,96,56,56]-> [16, 96, 3136]->[16,3136,96],每个batch有16张图片，每个图片有3136patch，向量长度为96
+        x = self.proj(x).flatten(2).transpose(1, 2)
+
+        #判断是否有归一化层
         if self.norm is not None:
-            x = self.norm(x)
-        print(x.shape)
+            x = self.norm(x)    #如果有进行归一化处理，数据维度不变
         return x
 
     def flops(self):
@@ -591,55 +626,61 @@ class SwinTransformer(nn.Module):
                                norm_layer=norm_layer,   #是否进行归一化处理
                                downsample=PatchMerging if (i_layer < self.num_layers - 1) else None,    #下采样策略，不是最后一层都要进行下采样
                                use_checkpoint=use_checkpoint)   #是否使用梯度检查点
-            self.layers.append(layer)
+            self.layers.append(layer)       #将构造好的layer添加到容器中
 
-        self.norm = norm_layer(self.num_features)
-        self.avgpool = nn.AdaptiveAvgPool1d(1)
-        self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
+        self.norm = norm_layer(self.num_features)   #实例化一个归一化层
+        self.avgpool = nn.AdaptiveAvgPool1d(1)      #平均池化，采用平均的方法将特征向量压缩成一维向量
+        self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()     #实例化输出层
 
-        self.apply(self._init_weights)
+        self.apply(self._init_weights)      #初始化模型权重和偏置
 
     def _init_weights(self, m):
-        if isinstance(m, nn.Linear):
-            trunc_normal_(m.weight, std=.02)
-            if isinstance(m, nn.Linear) and m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.LayerNorm):
-            nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
+        '''
+        :m是传入层的对象，函数会根据传入对象的不同类进行不同的初始化操作
+        :param m:
+        :return:
+        '''
+        if isinstance(m, nn.Linear):        #判断传入的对象是否是linear类
+            trunc_normal_(m.weight, std=.02)    #采用截断式正态分布的方法初始化权重，正态分布方差为0.2
+            if isinstance(m, nn.Linear) and m.bias is not None: #判断这个层是否有偏置
+                nn.init.constant_(m.bias, 0)    ##初始偏置初始化为全0
+        elif isinstance(m, nn.LayerNorm):   #判断传入对象是否为LN层
+            nn.init.constant_(m.bias, 0)        #初始化偏置为0
+            nn.init.constant_(m.weight, 1.0)        #初始化权重为1
 
     @torch.jit.ignore
     def no_weight_decay(self):
         return {'absolute_pos_embed'}
 
-    @torch.jit.ignore
+    @torch.jit.ignore   #这个装饰器的作用是用于标记不应被 JIT 编译的函数或方法。JIT 是 PyTorch 用于加速模型推理的技术，它通过将 Python 代码转换为更高效的底层代码来提升性能。
     def no_weight_decay_keywords(self):
         return {'relative_position_bias_table'}
 
     def forward_features(self, x):
-        print(x.shape)
-        x = self.patch_embed(x)
-        print(x.shape)
-        if self.ape:
-            x = x + self.absolute_pos_embed
-        x = self.pos_drop(x)
-        print(x.shape)
+
+        x = self.patch_embed(x) #[16, 3, 224, 224]  -> [16,3136,96],经过了一个卷积层，每个batch有16张图片，每个图片有3136patch，向量长度为96
+
+
+        if self.ape:    #判断是否嵌入绝对位置编码
+            x = x + self.absolute_pos_embed     #采用绝对位置编码，初始化为全零的一个张量。
+        x = self.pos_drop(x)    #[16,3136,96]不变，使用dropout
+
 
         for layer in self.layers:
-            x = layer(x)
-            print(x.shape)
+            x = layer(x)    #在第一次执行这个函数过程中[16, 3136, 96] -> [16, 784, 192],完成了一个stage的计算，并且完成了下采样过程
+                            #[16, 3136, 96] -> [16, 784, 192] -> [16, 196, 384] -> [16, 49, 768],经过了四个stage，每次序列长度减少四倍，特征维度翻一倍
 
-        x = self.norm(x)  # B L C
-        print(x.shape)
-        x = self.avgpool(x.transpose(1, 2))  # B C 1
-        print(x.shape)
-        x = torch.flatten(x, 1)
-        print(x.shape)
+        x = self.norm(x)  # B L C   #经过LN归一化处理
+
+        x = self.avgpool(x.transpose(1, 2))  # B C 1 #[16, 49, 768] -> [16, 768, 49] -> [16, 768, 1]
+
+        x = torch.flatten(x, 1)  #[16, 768, 1] -> [16, 768]
+
         return x
 
     def forward(self, x):
-        x = self.forward_features(x)
-        x = self.head(x)
+        x = self.forward_features(x)    #x[16,3,224,224] ->[16, 768]将每一张图片提取为一个特征向量
+        x = self.head(x)    #根据这个特征向量对图片进行分类  [16, 768] -> [16, 10]
         return x
 
     def flops(self):

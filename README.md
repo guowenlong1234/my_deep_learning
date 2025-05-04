@@ -321,6 +321,29 @@ os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
       + 
 
 # 07_swintransformer源码学习
+
+## 模型保存方法函数，以及常见需要保存的参数
+```
+def save_checkpoint(config, epoch, model, max_accuracy, optimizer, lr_scheduler, logger):
+    save_state = {'model': model.state_dict(),      #构造一个字典，用于存储需要保存的内容
+                  'optimizer': optimizer.state_dict(),
+                  'lr_scheduler': lr_scheduler.state_dict(),
+                  'max_accuracy': max_accuracy,
+                  'epoch': epoch,
+                  'config': config}
+    if config.AMP_OPT_LEVEL != "O0":
+        #是否采用了混合精度模式
+        save_state['amp'] = amp.state_dict()
+
+    save_path = os.path.join(config.OUTPUT, f'ckpt_epoch_{epoch}.pth')  #构造保存路径
+    logger.info(f"{save_path} saving......")    #打印日志信息
+    torch.save(save_state, save_path)           #保存模型
+    logger.info(f"{save_path} saved !!!")
+```
+
+## 相对位置编码构造方法和使用方法
+
+
 ## 张量的广播与科学运算
 因为广播机制的存在，允许不同形状的张量之间进行计算。
 ### 相同形状的张量计算

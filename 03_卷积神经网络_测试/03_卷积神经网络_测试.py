@@ -9,7 +9,7 @@ import numpy as np
 #定义超参数
 input_size = 28         #图像总尺寸
 num_classes = 10        #标签的种类数
-num_epochs = 3          #训练的总循环周期
+num_epochs = 10          #训练的总循环周期
 batch_size = 64         #一个撮（批次）的大小，64张图片
 learning_rate = 0.001   #定义学习率
 

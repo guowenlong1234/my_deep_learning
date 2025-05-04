@@ -12,23 +12,24 @@ from timm.scheduler.scheduler import Scheduler
 
 
 def build_scheduler(config, optimizer, n_iter_per_epoch):
-    num_steps = int(config.TRAIN.EPOCHS * n_iter_per_epoch)
-    warmup_steps = int(config.TRAIN.WARMUP_EPOCHS * n_iter_per_epoch)
-    decay_steps = int(config.TRAIN.LR_SCHEDULER.DECAY_EPOCHS * n_iter_per_epoch)
+    #传入参数config, optimizer, len(data_loader_train）
+
+    num_steps = int(config.TRAIN.EPOCHS * n_iter_per_epoch)#计算总的训练步数，数值为epochs*len(data_loader_train）
+    warmup_steps = int(config.TRAIN.WARMUP_EPOCHS * n_iter_per_epoch)   #计算热机需要的步数，热机epoch*每个epoch中的batch数量
+    decay_steps = int(config.TRAIN.LR_SCHEDULER.DECAY_EPOCHS * n_iter_per_epoch)    #计算学习率衰减步骤数，从这个步数之后，将会发生学习率的衰减
 
     lr_scheduler = None
-    if config.TRAIN.LR_SCHEDULER.NAME == 'cosine':
+    if config.TRAIN.LR_SCHEDULER.NAME == 'cosine':  #学习率衰减方法为cos衰减
         lr_scheduler = CosineLRScheduler(
             optimizer,
             t_initial=num_steps,
-            t_mul=1.,
             lr_min=config.TRAIN.MIN_LR,
             warmup_lr_init=config.TRAIN.WARMUP_LR,
             warmup_t=warmup_steps,
             cycle_limit=1,
             t_in_epochs=False,
         )
-    elif config.TRAIN.LR_SCHEDULER.NAME == 'linear':
+    elif config.TRAIN.LR_SCHEDULER.NAME == 'linear':    #线性衰减
         lr_scheduler = LinearLRScheduler(
             optimizer,
             t_initial=num_steps,
@@ -37,7 +38,7 @@ def build_scheduler(config, optimizer, n_iter_per_epoch):
             warmup_t=warmup_steps,
             t_in_epochs=False,
         )
-    elif config.TRAIN.LR_SCHEDULER.NAME == 'step':
+    elif config.TRAIN.LR_SCHEDULER.NAME == 'step':      #逐步衰减
         lr_scheduler = StepLRScheduler(
             optimizer,
             decay_t=decay_steps,
