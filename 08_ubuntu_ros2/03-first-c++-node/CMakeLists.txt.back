@@ -1,0 +1,12 @@
+project(First_cpp_node)
+cmake_minimum_required(VERSION 3.8)
+
+add_executable(ros2_cpp_node ros2-first-cpp-node.cpp)       #(生成的可执行文件名称 等待编译的文件名称)
+
+find_package(rclcpp REQUIRED)       #直接查找到rclcpp头文件和库文件所在的路径，REQUIRED表示这个文件是必须的,会将他暂时存在类似于环境变量中头文件rclcpp_INCLUDE_DIRS等待调用
+
+message(STATUS ${rclcpp_INCLUDE_DIRS})  #头文件存储路径
+message(STATUS ${rclcpp_LIBRARIES})  #库文件存储路径librclcpp.so 动态链接库
+
+target_include_directories(ros2_cpp_node PUBLIC ${rclcpp_INCLUDE_DIRS})   #连接头文件（可执行文件名称 头文件存储路径）
+target_link_libraries(ros2_cpp_node ${rclcpp_LIBRARIES})        #库文件连接（可执行文件名称 库文件存储路径）
