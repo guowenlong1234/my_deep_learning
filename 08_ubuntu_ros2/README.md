@@ -60,3 +60,73 @@ export https_proxy=http://127.0.0.1:1080
 export socks5_proxy=sockes5://127.0.0.1:1080
 ```
 # 关于C++
+# 关于ros2 pakge构建方法
+## python版本
+- 01.构建功能包指令
+```
+ros2 pkg create --build-type ament_python --license Apache-2.0 <pkgname>
+```
+- 02.编写功能包代码放在pkg_name路径下
+- 03.在setup.py文件中声明功能包的路径以及可执行文件的名称
+构建好功能包之后，在<pkg_name>路径下新建.py文件，然后在setup.py文件中声明节点。声明节点的代码
+```
+    entry_points={
+        'console_scripts': [
+            "first_python_pkg = first_python_pkg.first_python_pkg_node1:main"       #这一行是新加的
+            "name.exe         = pkg_name.node_name:function_name"    #指明生成的可执行文件名称，以及对应的函数位置。
+        ],
+    },
+```
+- 04.在package.xml(功能包清单文件)文件中添加依赖声明
+```
+<depend>rclpy</depend>
+```
+- 05.命令行中使用colcon命令构建功能包
+```
+colcon build
+```
+注：colon会在当前文件路径下扫描所有的功能包并进行构建，在这条命令的路径下生成三个子文件夹。其中build文件夹为构建过程中产生的中间文件。install文件夹为构建结果文件夹，其下有一个功能包文件夹
+- 06.添加环境变量使得脚本能够找到度英功能包的路径,在install路径下自带有setup.bash文件可以修改环境变量。
+```
+source setup.bash
+```
+## c++版本
+- 01.构建功能包指令
+```
+ros2 pkg create --build-type ament_cmake --license Apache-2.0 <pkgname>
+```
+- 02.编写节点代码
+在src路径下添加新的node代码文件。
+- 03.CMakeLists.txt文件中指定代码,指定内容与构建节点时所用的基本相同，
+```
+add_executable(ros2_cpp_node src/ros2-first-cpp-node.cpp)       #(生成的可执行文件名称 等待编译的文件相对路径)
+
+find_package(rclcpp REQUIRED)       #直接查找到rclcpp头文件和库文件所在的路径，REQUIRED表示这个文件是必须的,会将他暂时存在类似于环境变量中头文件rclcpp_INCLUDE_DIRS等待调用
+
+message(STATUS ${rclcpp_INCLUDE_DIRS})  #头文件存储路径
+message(STATUS ${rclcpp_LIBRARIES})  #库文件存储路径librclcpp.so 动态链接库
+
+target_include_directories(ros2_cpp_node PUBLIC ${rclcpp_INCLUDE_DIRS})   #连接头文件（可执行文件名称 头文件存储路径）
+target_link_libraries(ros2_cpp_node ${rclcpp_LIBRARIES})        #库文件连接（可执行文件名称 库文件存储路径）
+```
+- 04.在src同级目录处构建build文件夹，进入build目录，运用cmake指令
+```
+cmake ../
+```
+- 05.在build目录make,完成编译构建
+```
+make
+```
+- 06.在功能包的同级目录下构建功能包,在同级目录/build/first-cpp-pkg下产生可执行文件
+```
+colcon build
+```
+- 07.构建环境变量，指向这个pkg
+```
+source install/setup.bash
+```
+- 08.依赖声明（非必须）
+在package.xml文件中声明包和节点的依赖关系
+
+
+
