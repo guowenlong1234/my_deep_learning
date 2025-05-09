@@ -60,6 +60,7 @@ export https_proxy=http://127.0.0.1:1080
 export socks5_proxy=sockes5://127.0.0.1:1080
 ```
 # 关于C++
+c++基本类的用法参见[这里](./07-cpp-learning/cpp-learn/src/cpp-learn.cpp)
 # 关于ros2 pakge构建方法
 ## python版本
 - 01.构建功能包指令
@@ -127,6 +128,7 @@ source install/setup.bash
 ```
 - 08.依赖声明（非必须）
 在package.xml文件中声明包和节点的依赖关系
+
 
 
 
