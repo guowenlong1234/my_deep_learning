@@ -129,6 +129,36 @@ source install/setup.bash
 - 08.依赖声明（非必须）
 在package.xml文件中声明包和节点的依赖关系
 
+### C++导入第三方库方法
+将第三方库资源文件下载到src/pkg_name/include目录下，然后在CmakeLists中添加关系
+```
+include_directories(include)  #包含include目录
+```
 
 
+# ros常用指令
 
+```
+ros2 node list
+```
+显示ros2正在进行的节点
+```
+ros2 node info </nodename>
+```
+显示ros2正在运行节点的信息
+
+```
+ros2 topic 
+关于话题的指令相关
+
+ros2 topic echo </nodename/话题名称>
+显示话题的内容
+
+ros2 topic info <话题名称>
+显示话题的属性：几个订阅者、几个发布者、通讯类型
+
+ros2 interface show <话题的type值>
+查看消息接口的通讯方式
+
+ros2 topic pub /turtle1/cmd_vel 
+发布一个话题
