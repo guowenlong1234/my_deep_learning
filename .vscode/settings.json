@@ -1,0 +1,8 @@
+{
+    "C_Cpp.errorSquiggles": "disabled",
+    "files.associations": {
+        "iostream": "cpp",
+        "functional": "cpp"
+    },
+    "cmake.sourceDirectory": "/home/gwl/my_deep_learning/08_ubuntu_ros2/01-cmker-test"
+}

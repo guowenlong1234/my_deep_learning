@@ -160,5 +160,81 @@ ros2 topic info <话题名称>
 ros2 interface show <话题的type值>
 查看消息接口的通讯方式
 
-ros2 topic pub /turtle1/cmd_vel 
+ros2 topic pub <话题名称> <通讯接口> <发布数据的内容>
 发布一个话题
+
+
+```
+# ros中常用的代码
+## c++版本
+### 创建话题（发布话题与订阅话题）
+```C++
+class TurtleControlNode : public rclcpp::Node
+{
+private:
+    rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr publisher_; // 声明发布者的智能指针
+    rclcpp::Subscription<turtlesim::msg::Pose>::SharedPtr subscriber_;  // 声明订阅者的共享指针
+
+public:
+    explicit TurtleControlNode(const std::string &node_name) : Node(node_name)
+    {
+        publisher_ = this->create_publisher<geometry_msgs::msg::Twist>("/turtle1/cmd_vel", 10); // 实例化一个发布者
+        subscriber_ = this->create_subscription<turtlesim::msg::Pose>("/turtle1/pose", 10, std::bind(&TurtleControlNode::on_pose_received_, this, std::placeholders::_1));
+        //实例化一个订阅者<消息类型的接口>(订阅话题的名称，队列数量，回调函数)
+    
+    void on_pose_received_(const turtlesim::msg::Pose::SharedPtr pose) 
+    {
+        //每次受到话题之后要调用的回调函数。
+
+    }
+};
+}
+```
+### 自定义消息接口方法
+[系统状态显示消息接口在这里](/08_ubuntu_ros2/05-chapt3_ws/topic_practice_ws/src/status_interfaces/msg/)
+
+1.构建功能包
+```
+ros2 pkg create status_interfaces --dependencies builtin_interfaces rosidl_default_genterators
+构建自定义通讯接口的功能包，主要有两个依赖项，
+builtin_interfaces，支持时间戳，
+rosidl_default_genterators将ros同新街口转化为python和cpp源码的库。
+```
+2.删除无关目录/src、/install。在ws/src/pkg_name路径下新建文件夹msg。
+
+> 注意：必须使用msg命名。
+
+3.在msg目录下新建消息接口文件SystemStatus.msg文件
+
+> 必须使用驼峰命名法，文件名以.msg作为后缀
+
+4.在文件内部编写消息接口需要的数据类型。
+```
+builtin_interfaces/Time stamp   #记录时间戳
+string host_name    #主机名称
+float32 cpu_percent #cpu使用率
+float32 memory_percent  #内存使用率
+float32 memory_total #内存总大小
+float32 memory_available    #可用内存总大小
+float64 net_sent    #网络发送数据总量
+float64 net_recv    #网络数据接受总量
+```
+
+5.在cmakelist文件中插入这样一个函数,可以同时插入多个消息接口文件
+```
+#这是一个cmake函数，来自于依赖rosidl_default_genterators，用于将msg等消息接口定义文件转换成库或者头文件类
+rosidl_generate_interfaces(${PROJECT_NAME} 
+"msg/SystemStatus.msg" 
+"msg/SystemStatus.msg" 
+"msg/SystemStatus.msg" 
+DEPENDENCIES builtin_interfaces)
+```
+
+6.在package.xml文件中添加声明
+```
+  ///声明这是一个功能包文件。
+  <member_of_group>rosidl_interface_packages</member_of_group>
+```
+会自动生成python和cpp版本的头文件
+
+7.回到工作环境目录下，构建功能包并改变环境变量
