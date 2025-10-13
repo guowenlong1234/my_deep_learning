@@ -33,7 +33,7 @@ class SysStatusPub(Node):
         net_io_counters = psutil.net_io_counters()
 
         msg = SystemStatus()
-        msg.stamp = self.get_clock().now().to_msg() #直接将当前时间转化成一个时钟防盗信息里面。
+        msg.stamp = self.get_clock().now().to_msg() #直接将当前时间转化成一个时钟信息里面。
         msg.host_name = platform.node()
         msg.cpu_percent = cpu_percent
         msg.memory_percent = memory_info.percent/1024/1024

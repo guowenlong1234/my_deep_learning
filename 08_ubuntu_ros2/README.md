@@ -135,6 +135,9 @@ source install/setup.bash
 include_directories(include)  #包含include目录
 ```
 
+### c++ qt库的使用
+[qt代码文件](/08_ubuntu_ros2/05-chapt3_ws/topic_practice_ws/src/status_display/src/hello_qt.cpp)
+[对应的CMakelist文件在这里](/08_ubuntu_ros2/05-chapt3_ws/topic_practice_ws/src/status_display/CMakeLists.txt)
 
 # ros常用指令
 
@@ -162,6 +165,25 @@ ros2 interface show <话题的type值>
 
 ros2 topic pub <话题名称> <通讯接口> <发布数据的内容>
 发布一个话题
+
+ros2 param list
+查询参数列表
+
+ros2 param describe <节点名> <参数名字>
+查看参数的细节描述
+
+ros2 param get <节点名> <参数名字>
+获取参数的具体值
+
+ros2 param set <节点名> <参数名字> <设置值>
+设置具体参数的值
+
+ros2 oaram dump <节点名> > <输出文件名.yaml>
+将节点的参数值输出到文件
+
+ros2 run <包名> <节点名> --ros-args --params-file <文件名.yaml>
+使用文件中的单数运行节点
+
 
 
 ```
