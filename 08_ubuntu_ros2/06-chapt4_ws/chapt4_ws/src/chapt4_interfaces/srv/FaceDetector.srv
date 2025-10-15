@@ -1,0 +1,8 @@
+sensor_msgs/Image image #人脸图像
+---
+int16 number        #人脸数量
+float32 use_time    #使用时间
+int32[] top         #顶部位置
+int32[] right       #右侧位置
+int32[] bottom      #底部位置
+int32[] left        #左侧位置
